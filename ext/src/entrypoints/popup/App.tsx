@@ -349,6 +349,8 @@ const App: React.FC = () => {
 
         {screen === 'slot_select' && client && (
           <SlotSelectView
+            serverUrl={client.serverUrl}
+            clientId={client.clientId}
             meta={meta}
             serverSlots={serverSlots}
             currentSlot={localState.using_slot}
@@ -357,6 +359,7 @@ const App: React.FC = () => {
             onSoftDeleteSlot={handleSoftDeleteSlot}
             onPurgeTombstoneSlot={handlePurgeTombstoneSlot}
             onRefresh={refreshSlots}
+            onChangeServer={() => setScreen('setup')}
             onCancel={localState.using_slot ? () => setScreen('main') : undefined}
           />
         )}

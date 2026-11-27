@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
+import { findPresetServer } from '../../../lib/servers';
 import type { ListSlotEntry, Slot0Payload } from '../../../lib/types';
 
 interface SlotSelectViewProps {
+  serverUrl: string;
+  clientId: string;
   meta: Slot0Payload;
   serverSlots: Map<number, ListSlotEntry>;
   currentSlot: number | null;
@@ -10,10 +13,13 @@ interface SlotSelectViewProps {
   onSoftDeleteSlot: (slot: number) => Promise<void>;
   onPurgeTombstoneSlot: (slot: number) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onChangeServer: () => void;
   onCancel?: () => void;
 }
 
 export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
+  serverUrl,
+  clientId,
   meta,
   serverSlots,
   currentSlot,
@@ -22,8 +28,10 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
   onSoftDeleteSlot,
   onPurgeTombstoneSlot,
   onRefresh,
+  onChangeServer,
   onCancel,
 }) => {
+  const activePreset = findPresetServer(serverUrl);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmDeleteSlot, setConfirmDeleteSlot] = useState<number | null>(null);
@@ -121,6 +129,36 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
           className="text-xs px-2.5 py-1 rounded bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 font-medium"
         >
           Refresh
+        </button>
+      </div>
+
+      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Connected Server
+          </div>
+          {activePreset && (
+            <div className="text-xs font-medium text-slate-800 dark:text-slate-100 truncate">
+              {activePreset.name}
+            </div>
+          )}
+          <div
+            className="text-[11px] font-mono text-slate-600 dark:text-slate-300 truncate"
+            title={serverUrl}
+          >
+            {serverUrl}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={clientId}>
+            Client ID: <span className="font-mono">{clientId.slice(0, 14)}...</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onChangeServer}
+          disabled={busy}
+          className="shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-60"
+        >
+          Change Server
         </button>
       </div>
 
