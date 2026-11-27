@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="cloud-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+    <linearGradient id="cookie-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fcd34d" />
+      <stop offset="55%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <mask id="cookie-bite">
+      <rect x="0" y="0" width="128" height="128" fill="white" />
+      <circle cx="96" cy="60" r="9.5" fill="black" />
+      <circle cx="101" cy="70" r="5.5" fill="black" />
+    </mask>
+  </defs>
+
+  <!-- Rounded square badge -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg-grad)" />
+  <rect x="5" y="5" width="118" height="118" rx="27" fill="none" stroke="#93c5fd" stroke-opacity="0.35" stroke-width="2" />
+
+  <!-- Cloud -->
+  <g fill="url(#cloud-grad)">
+    <circle cx="40" cy="56" r="18" />
+    <circle cx="60" cy="44" r="23" />
+    <circle cx="80" cy="57" r="17" />
+    <rect x="40" y="54" width="40" height="20" />
+  </g>
+
+  <!-- Cookie separation halo -->
+  <circle cx="76" cy="78" r="28" fill="#1e40af" fill-opacity="0.35" mask="url(#cookie-bite)" />
+
+  <!-- Cookie with bite -->
+  <g mask="url(#cookie-bite)">
+    <circle cx="76" cy="78" r="25" fill="url(#cookie-grad)" stroke="#b45309" stroke-width="2" />
+    <!-- Chocolate chips -->
+    <circle cx="65" cy="70" r="4.2" fill="#78350f" />
+    <circle cx="81" cy="87" r="4.5" fill="#78350f" />
+    <circle cx="64" cy="88" r="3.4" fill="#78350f" />
+  </g>
+</svg>

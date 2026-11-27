@@ -9,7 +9,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -56,11 +56,16 @@ impl NonceCache {
     }
 }
 
+const ADMIN_HTML: &str = include_str!("admin.html");
+const FAVICON_ICO: &[u8] = include_bytes!("favicon.ico");
+const FAVICON_SVG: &str = include_str!("favicon.svg");
+
 #[derive(Clone)]
 pub struct AppState {
     pub storage: Arc<Storage>,
     pub admin_token: Arc<String>,
     pub auto_register_pending: bool,
+    pub public_mode: bool,
     pub max_body_bytes: usize,
     pub auth_window_secs: i64,
     pub enable_nonce_cache: bool,
@@ -178,14 +183,80 @@ pub fn build_router(state: AppState, rate_limit_per_min: u32) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), admin_auth_middleware));
 
     Router::new()
-        .route("/", post(handle_sync))
+        .route("/", get(handle_root_help).post(handle_sync))
         .route("/health", get(handle_health))
+        .route("/admin.html", get(handle_admin_html))
+        .route("/favicon.ico", get(handle_favicon_ico))
+        .route("/favicon.svg", get(handle_favicon_svg))
         .nest("/admin", admin_routes)
         .with_state(state)
         .layer(middleware::from_fn_with_state(limiter, rate_limit_middleware))
         .layer(DefaultBodyLimit::max(max_body))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+}
+
+async fn handle_root_help(State(state): State<AppState>) -> impl IntoResponse {
+    let mode = if state.public_mode {
+        "PUBLIC (new client_ids are automatically approved)"
+    } else if state.auto_register_pending {
+        "APPROVAL (new client_ids are registered as pending admin approval)"
+    } else {
+        "PRIVATE (new client_id registration disabled; only existing/pre-authorized client_ids allowed)"
+    };
+
+    let body = format!(
+        "CloudCookie Server v{version}\n\
+         \n\
+         Mode: {mode}\n\
+         \n\
+         Endpoints:\n\
+           GET  /                                 This plain-text help\n\
+           POST /                                 Client sync endpoint (actions: get, update, delete, list)\n\
+           GET  /health                           Server health check (JSON)\n\
+           GET  /admin.html                       Admin web console\n\
+           GET  /admin/clients                    List clients (Bearer token required)\n\
+           POST /admin/clients                    Pre-authorize client (Bearer token required)\n\
+           POST /admin/clients/{{client_id}}/approve  Approve client (Bearer token required)\n\
+           POST /admin/clients/{{client_id}}/revoke   Revoke client (Bearer token required)\n\
+           DELETE /admin/clients/{{client_id}}        Delete client (Bearer token required)\n\
+         \n\
+         Sync Request (POST /):\n\
+           JSON body with client_id (64-char hex Ed25519 pubkey), action, slot,\n\
+           timestamp, nonce (32-char hex), signature, and for update:\n\
+           expected_version and encrypted payload.\n",
+        version = env!("CARGO_PKG_VERSION"),
+        mode = mode,
+    );
+
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        body,
+    )
+}
+
+async fn handle_admin_html() -> impl IntoResponse {
+    Html(ADMIN_HTML)
+}
+
+async fn handle_favicon_ico() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/x-icon"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        FAVICON_ICO,
+    )
+}
+
+async fn handle_favicon_svg() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        FAVICON_SVG,
+    )
 }
 
 fn error_response(status: StatusCode, error: &str, message: impl Into<String>) -> Response {
@@ -358,7 +429,7 @@ async fn handle_sync_inner(state: AppState, req: SyncRequest) -> Response {
     // Check admin authorization for this client_id
     let status = match state
         .storage
-        .check_or_register_client(&req.client_id, state.auto_register_pending)
+        .check_or_register_client(&req.client_id, state.auto_register_pending, state.public_mode)
         .await
     {
         Ok(s) => s,

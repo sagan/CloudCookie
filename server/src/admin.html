@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudCookie Admin</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      --warn: #d97706;
+      --warn-hover: #b45309;
+      --success: #16a34a;
+      --success-hover: #15803d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 24px 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .login-box {
+      max-width: 420px;
+      margin: 60px auto;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .subtitle {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    input[type="password"], input[type="text"], select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--text);
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff;
+      background: var(--primary);
+    }
+    button:hover { background: var(--primary-hover); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.secondary {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.secondary:hover { background: #f1f5f9; }
+    button.success { background: var(--success); }
+    button.success:hover { background: var(--success-hover); }
+    button.warn { background: var(--warn); }
+    button.warn:hover { background: var(--warn-hover); }
+    button.danger { background: var(--danger); }
+    button.danger:hover { background: var(--danger-hover); }
+    button.sm { padding: 4px 10px; font-size: 12px; }
+    .mt-12 { margin-top: 12px; }
+    .error-msg {
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+      font-size: 13px;
+    }
+    .header-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .toolbar select { width: auto; }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .stat-pill {
+      background: #f1f5f9;
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    th {
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: capitalize;
+    }
+    .badge-approved { background: #dcfce7; color: #166534; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-revoked { background: #fee2e2; color: #991b1b; }
+    .actions {
+      display: flex;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .empty {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--muted);
+    }
+    .register-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .register-bar input[type="text"] {
+      flex: 2 1 320px;
+    }
+    .register-bar input.label-input {
+      flex: 1 1 180px;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="login-view" class="card login-box">
+      <h1>CloudCookie Admin</h1>
+      <p class="subtitle">Enter the server admin bearer token to manage clients.</p>
+      <form id="login-form">
+        <label for="token-input">Admin Token</label>
+        <input id="token-input" type="password" placeholder="Bearer token" required autocomplete="current-password">
+        <div class="mt-12">
+          <button id="login-btn" type="submit" style="width: 100%;">Login</button>
+        </div>
+        <div id="login-error" class="error-msg hidden"></div>
+      </form>
+    </div>
+
+    <div id="dashboard-view" class="card hidden">
+      <div class="header-row">
+        <div>
+          <h1>CloudCookie Clients</h1>
+          <p class="subtitle" style="margin-bottom: 0;">Approve, revoke, or delete registered client IDs.</p>
+        </div>
+        <div class="toolbar">
+          <select id="status-filter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="revoked">Revoked</option>
+          </select>
+          <button id="refresh-btn" class="secondary" type="button">Refresh</button>
+          <button id="logout-btn" class="secondary" type="button">Logout</button>
+        </div>
+      </div>
+
+      <div id="stats-bar" class="stats"></div>
+
+      <form id="register-form" class="register-bar">
+        <input id="reg-client-id" type="text" class="mono" placeholder="Register new client_id (64-char lowercase hex)" maxlength="64" required>
+        <input id="reg-label" type="text" class="label-input" placeholder="Optional label">
+        <button id="reg-btn" type="submit">Register Client</button>
+      </form>
+
+      <div id="dashboard-error" class="error-msg hidden"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Client ID</th>
+              <th>Status</th>
+              <th>Slots</th>
+              <th>Storage Usage</th>
+              <th>Last Seen</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="clients-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const STORAGE_KEY = "cloudcookie_admin_token";
+
+      const loginView = document.getElementById("login-view");
+      const dashboardView = document.getElementById("dashboard-view");
+      const loginForm = document.getElementById("login-form");
+      const tokenInput = document.getElementById("token-input");
+      const loginBtn = document.getElementById("login-btn");
+      const loginError = document.getElementById("login-error");
+      const dashboardError = document.getElementById("dashboard-error");
+      const statusFilter = document.getElementById("status-filter");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const logoutBtn = document.getElementById("logout-btn");
+      const statsBar = document.getElementById("stats-bar");
+      const clientsTbody = document.getElementById("clients-tbody");
+      const registerForm = document.getElementById("register-form");
+      const regClientId = document.getElementById("reg-client-id");
+      const regLabel = document.getElementById("reg-label");
+      const regBtn = document.getElementById("reg-btn");
+
+      let adminToken = sessionStorage.getItem(STORAGE_KEY) || "";
+
+      function showError(el, msg) {
+        if (!msg) {
+          el.textContent = "";
+          el.classList.add("hidden");
+        } else {
+          el.textContent = msg;
+          el.classList.remove("hidden");
+        }
+      }
+
+      function formatBytes(bytes) {
+        if (bytes === 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        let i = 0;
+        let val = bytes;
+        while (val >= 1024 && i < units.length - 1) {
+          val /= 1024;
+          i++;
+        }
+        return (i === 0 ? val : val.toFixed(2)) + " " + units[i];
+      }
+
+      function formatDate(iso) {
+        if (!iso) return "-";
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? iso : d.toLocaleString();
+      }
+
+      async function apiFetch(path, options = {}) {
+        const headers = Object.assign(
+          { Authorization: "Bearer " + adminToken },
+          options.headers || {}
+        );
+        const res = await fetch(path, Object.assign({}, options, { headers }));
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_) {}
+        if (!res.ok) {
+          const msg = (data && data.message) || ("HTTP " + res.status);
+          const err = new Error(msg);
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      }
+
+      function setAuthenticated(authenticated) {
+        if (authenticated) {
+          loginView.classList.add("hidden");
+          dashboardView.classList.remove("hidden");
+        } else {
+          dashboardView.classList.add("hidden");
+          loginView.classList.remove("hidden");
+        }
+      }
+
+      function renderClients(clients) {
+        clientsTbody.textContent = "";
+        statsBar.textContent = "";
+
+        let pending = 0;
+        let approved = 0;
+        let revoked = 0;
+        let totalBytes = 0;
+
+        for (const c of clients) {
+          if (c.status === "pending") pending++;
+          else if (c.status === "approved") approved++;
+          else if (c.status === "revoked") revoked++;
+
+          const slotEntries = Object.values(c.slots || {});
+          for (const s of slotEntries) {
+            totalBytes += Number(s.size_bytes || 0);
+          }
+        }
+
+        const pills = [
+          "Total: " + clients.length,
+          "Approved: " + approved,
+          "Pending: " + pending,
+          "Revoked: " + revoked,
+          "Storage: " + formatBytes(totalBytes)
+        ];
+        for (const text of pills) {
+          const span = document.createElement("span");
+          span.className = "stat-pill";
+          span.textContent = text;
+          statsBar.appendChild(span);
+        }
+
+        if (clients.length === 0) {
+          const tr = document.createElement("tr");
+          const td = document.createElement("td");
+          td.colSpan = 6;
+          td.className = "empty";
+          td.textContent = "No clients found.";
+          tr.appendChild(td);
+          clientsTbody.appendChild(tr);
+          return;
+        }
+
+        for (const c of clients) {
+          const tr = document.createElement("tr");
+
+          const tdId = document.createElement("td");
+          const idDiv = document.createElement("div");
+          idDiv.className = "mono";
+          idDiv.textContent = c.client_id;
+          tdId.appendChild(idDiv);
+          if (c.label) {
+            const labelDiv = document.createElement("div");
+            labelDiv.style.fontSize = "12px";
+            labelDiv.style.color = "var(--muted)";
+            labelDiv.textContent = "Label: " + c.label;
+            tdId.appendChild(labelDiv);
+          }
+          tr.appendChild(tdId);
+
+          const tdStatus = document.createElement("td");
+          const badge = document.createElement("span");
+          badge.className = "badge badge-" + c.status;
+          badge.textContent = c.status;
+          tdStatus.appendChild(badge);
+          tr.appendChild(tdStatus);
+
+          const slotsObj = c.slots || {};
+          const slotKeys = Object.keys(slotsObj);
+          const tdSlots = document.createElement("td");
+          tdSlots.textContent = slotKeys.length === 0
+            ? "0"
+            : slotKeys.length + " (" + slotKeys.join(", ") + ")";
+          tr.appendChild(tdSlots);
+
+          const clientBytes = Object.values(slotsObj).reduce(
+            (sum, s) => sum + Number(s.size_bytes || 0),
+            0
+          );
+          const tdStorage = document.createElement("td");
+          tdStorage.textContent = formatBytes(clientBytes) + " (" + clientBytes + " B)";
+          tr.appendChild(tdStorage);
+
+          const tdSeen = document.createElement("td");
+          tdSeen.textContent = formatDate(c.last_seen_at);
+          tr.appendChild(tdSeen);
+
+          const tdActions = document.createElement("td");
+          const actionsDiv = document.createElement("div");
+          actionsDiv.className = "actions";
+
+          if (c.status !== "approved") {
+            const approveBtn = document.createElement("button");
+            approveBtn.type = "button";
+            approveBtn.className = "success sm";
+            approveBtn.textContent = "Approve";
+            approveBtn.addEventListener("click", () => approveClient(c.client_id));
+            actionsDiv.appendChild(approveBtn);
+          }
+
+          if (c.status === "approved") {
+            const revokeBtn = document.createElement("button");
+            revokeBtn.type = "button";
+            revokeBtn.className = "warn sm";
+            revokeBtn.textContent = "Revoke";
+            revokeBtn.addEventListener("click", () => revokeClient(c.client_id));
+            actionsDiv.appendChild(revokeBtn);
+          }
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "danger sm";
+          deleteBtn.textContent = "Delete";
+          deleteBtn.addEventListener("click", () => deleteClient(c.client_id));
+          actionsDiv.appendChild(deleteBtn);
+
+          tdActions.appendChild(actionsDiv);
+          tr.appendChild(tdActions);
+
+          clientsTbody.appendChild(tr);
+        }
+      }
+
+      async function loadClients() {
+        showError(dashboardError, "");
+        const filter = statusFilter.value;
+        const query = filter ? "?status=" + encodeURIComponent(filter) : "";
+        try {
+          const data = await apiFetch("/admin/clients" + query);
+          renderClients(data.clients || []);
+        } catch (err) {
+          if (err.status === 401) {
+            logout("Session expired or invalid admin token.");
+          } else {
+            showError(dashboardError, "Failed to load clients: " + err.message);
+          }
+        }
+      }
+
+      async function approveClient(clientId) {
+        showError(dashboardError, "");
+        try {
+          await apiFetch("/admin/clients/" + encodeURIComponent(clientId) + "/approve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+          });
+          await loadClients();
+        } catch (err) {
+          showError(dashboardError, "Approve failed: " + err.message);
+        }
+      }
+
+      async function revokeClient(clientId) {
+        showError(dashboardError, "");
+        try {
+          await apiFetch("/admin/clients/" + encodeURIComponent(clientId) + "/revoke", {
+            method: "POST"
+          });
+          await loadClients();
+        } catch (err) {
+          showError(dashboardError, "Revoke failed: " + err.message);
+        }
+      }
+
+      async function deleteClient(clientId) {
+        if (!confirm("Delete client " + clientId + " and all its stored data?")) {
+          return;
+        }
+        showError(dashboardError, "");
+        try {
+          await apiFetch("/admin/clients/" + encodeURIComponent(clientId), {
+            method: "DELETE"
+          });
+          await loadClients();
+        } catch (err) {
+          showError(dashboardError, "Delete failed: " + err.message);
+        }
+      }
+
+      function logout(message) {
+        adminToken = "";
+        sessionStorage.removeItem(STORAGE_KEY);
+        tokenInput.value = "";
+        setAuthenticated(false);
+        showError(loginError, message || "");
+      }
+
+      loginForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        showError(loginError, "");
+        const token = tokenInput.value.trim();
+        if (!token) return;
+
+        loginBtn.disabled = true;
+        adminToken = token;
+        try {
+          const data = await apiFetch("/admin/clients");
+          sessionStorage.setItem(STORAGE_KEY, adminToken);
+          setAuthenticated(true);
+          renderClients(data.clients || []);
+        } catch (err) {
+          adminToken = "";
+          showError(loginError, err.status === 401 ? "Invalid admin token." : err.message);
+        } finally {
+          loginBtn.disabled = false;
+        }
+      });
+
+      statusFilter.addEventListener("change", loadClients);
+      refreshBtn.addEventListener("click", loadClients);
+      logoutBtn.addEventListener("click", function () { logout(""); });
+
+      registerForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        showError(dashboardError, "");
+        const clientId = regClientId.value.trim();
+        const label = regLabel.value.trim();
+        if (!clientId) return;
+
+        regBtn.disabled = true;
+        try {
+          await apiFetch("/admin/clients", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              client_id: clientId,
+              label: label || null
+            })
+          });
+          regClientId.value = "";
+          regLabel.value = "";
+          await loadClients();
+        } catch (err) {
+          showError(dashboardError, "Register failed: " + err.message);
+        } finally {
+          regBtn.disabled = false;
+        }
+      });
+
+      if (adminToken) {
+        apiFetch("/admin/clients")
+          .then((data) => {
+            setAuthenticated(true);
+            renderClients(data.clients || []);
+          })
+          .catch(() => {
+            logout("");
+          });
+      }
+    })();
+  </script>
+</body>
+</html>

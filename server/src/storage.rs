@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tokio::sync::RwLock;
@@ -54,6 +54,7 @@ pub enum StorageError {
     VersionConflict { current_version: u64 },
     MaxSlotsExceeded { max_slots: usize },
     StorageQuotaExceeded { max_bytes: u64 },
+    AlreadyLocked(PathBuf),
     Io(std::io::Error),
     Serde(serde_json::Error),
 }
@@ -73,6 +74,13 @@ impl fmt::Display for StorageError {
             }
             StorageError::StorageQuotaExceeded { max_bytes } => {
                 write!(f, "per-client storage quota ({max_bytes} bytes) exceeded")
+            }
+            StorageError::AlreadyLocked(path) => {
+                write!(
+                    f,
+                    "data directory is already locked by another server instance ({})",
+                    path.display()
+                )
             }
             StorageError::Io(e) => write!(f, "storage I/O error: {e}"),
             StorageError::Serde(e) => write!(f, "storage serialization error: {e}"),
@@ -107,6 +115,7 @@ pub struct Storage {
     max_slot: u32,
     max_slots_per_client: Option<usize>,
     max_client_storage_bytes: Option<u64>,
+    _lock_file: File,
     registry: RwLock<BTreeMap<String, ClientRecord>>,
 }
 
@@ -120,6 +129,23 @@ impl Storage {
     ) -> Result<Self, StorageError> {
         let blobs_dir = data_dir.join("blobs");
         fs::create_dir_all(&blobs_dir)?;
+
+        let lock_path = data_dir.join(".lock");
+        let mut lock_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        if let Err(err) = lock_file.try_lock() {
+            return match err {
+                TryLockError::WouldBlock => Err(StorageError::AlreadyLocked(lock_path)),
+                TryLockError::Error(io_err) => Err(StorageError::Io(io_err)),
+            };
+        }
+        let _ = lock_file.set_len(0);
+        let _ = writeln!(lock_file, "{}", std::process::id());
+
         let registry_path = data_dir.join("clients.json");
 
         let mut clients = if registry_path.exists() {
@@ -170,6 +196,7 @@ impl Storage {
             max_slot,
             max_slots_per_client,
             max_client_storage_bytes,
+            _lock_file: lock_file,
             registry: RwLock::new(clients),
         })
     }
@@ -197,12 +224,15 @@ impl Storage {
         Ok(())
     }
 
-    /// Check client authorization status. If unknown and `auto_register_pending` is true,
-    /// records the client as `Pending` (subject to `max_pending`).
+    /// Check client authorization status.
+    /// - If `public_mode` is true, unknown clients are automatically registered as `Approved`.
+    /// - Otherwise, if `auto_register_pending` is true, unknown clients are recorded as `Pending`
+    ///   (subject to `max_pending`).
     pub async fn check_or_register_client(
         &self,
         client_id: &str,
         auto_register_pending: bool,
+        public_mode: bool,
     ) -> Result<Option<ClientStatus>, StorageError> {
         if !validate_client_id(client_id) {
             return Err(StorageError::InvalidClientId);
@@ -215,6 +245,22 @@ impl Storage {
             record.last_seen_at = now;
             record.request_count = record.request_count.saturating_add(1);
             return Ok(Some(record.status));
+        }
+
+        if public_mode {
+            let record = ClientRecord {
+                client_id: client_id.to_string(),
+                status: ClientStatus::Approved,
+                label: None,
+                created_at: now,
+                approved_at: Some(now),
+                last_seen_at: now,
+                request_count: 1,
+                slots: BTreeMap::new(),
+            };
+            reg.insert(client_id.to_string(), record);
+            self.save_registry_locked(&reg)?;
+            return Ok(Some(ClientStatus::Approved));
         }
 
         if !auto_register_pending {

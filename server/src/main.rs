@@ -24,7 +24,10 @@ async fn main() {
             cfg.max_slots_per_client,
             cfg.max_client_storage_bytes,
         )
-        .expect("failed to initialize storage"),
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to initialize storage at {}: {e}", cfg.data_dir.display());
+            std::process::exit(1);
+        }),
     );
 
     let admin_token = match cfg.admin_token {
@@ -39,15 +42,30 @@ async fn main() {
         }
     };
 
+    let auto_register_pending = if cfg.private_mode || cfg.public_mode {
+        false
+    } else {
+        cfg.auto_register_pending
+    };
+
     let state = AppState {
         storage,
         admin_token: Arc::new(admin_token),
-        auto_register_pending: cfg.auto_register_pending,
+        auto_register_pending,
+        public_mode: cfg.public_mode,
         max_body_bytes: cfg.max_body_bytes,
         auth_window_secs: cfg.auth_window_secs,
         enable_nonce_cache: cfg.enable_nonce_cache,
         nonce_cache: NonceCache::new(),
     };
+
+    if cfg.public_mode {
+        tracing::info!("PUBLIC mode enabled: new client_ids will be automatically approved");
+    } else if !auto_register_pending {
+        tracing::info!("PRIVATE mode enabled: new client_id registration is disabled");
+    } else {
+        tracing::info!("APPROVAL mode enabled: new client_ids will be registered as pending admin approval");
+    }
 
     let app = build_router(state, cfg.rate_limit_per_min);
     let listener = tokio::net::TcpListener::bind(cfg.listen)

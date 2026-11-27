@@ -6,20 +6,28 @@ use std::path::PathBuf;
 #[command(name = "cloudcookie-server", about = "CloudCookie E2E encrypted cookie sync server")]
 pub struct Config {
     /// Address and port to listen on
-    #[arg(long, env = "CLOUDCOOKIE_LISTEN", default_value = "0.0.0.0:8088")]
+    #[arg(long, env = "CLOUDCOOKIE_LISTEN", default_value = "0.0.0.0:6767")]
     pub listen: SocketAddr,
 
     /// Directory to store client registry and encrypted cookie blobs
-    #[arg(long, env = "CLOUDCOOKIE_DATA_DIR", default_value = "./data")]
+    #[arg(long, env = "CLOUDCOOKIE_DATA_DIR", default_value = "/var/lib/cloudcookie")]
     pub data_dir: PathBuf,
 
     /// Admin bearer token for /admin/* endpoints (if omitted, a random token is generated on startup)
     #[arg(long, env = "CLOUDCOOKIE_ADMIN_TOKEN")]
     pub admin_token: Option<String>,
 
-    /// Automatically record unknown client_ids as pending admin approval
-    #[arg(long, env = "CLOUDCOOKIE_AUTO_REGISTER_PENDING", default_value_t = true)]
+    /// Automatically record unknown client_ids as pending admin approval (APPROVAL mode)
+    #[arg(long, env = "CLOUDCOOKIE_AUTO_REGISTER_PENDING", default_value_t = false)]
     pub auto_register_pending: bool,
+
+    /// Public mode: automatically approve new client_ids without requiring admin approval
+    #[arg(long, env = "CLOUDCOOKIE_PUBLIC_MODE", default_value_t = false, conflicts_with = "private_mode")]
+    pub public_mode: bool,
+
+    /// Private mode (default): disable new client_id registration (only existing/pre-authorized client_ids allowed)
+    #[arg(long, env = "CLOUDCOOKIE_PRIVATE_MODE", default_value_t = false, conflicts_with = "public_mode")]
+    pub private_mode: bool,
 
     /// Maximum number of pending client registrations to keep (DoS protection)
     #[arg(long, env = "CLOUDCOOKIE_MAX_PENDING", default_value_t = 1000)]

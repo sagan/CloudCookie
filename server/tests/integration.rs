@@ -10,7 +10,7 @@ use cloudcookie_server::crypto::{
     xaes_256_gcm_open, xaes_256_gcm_seal,
 };
 use cloudcookie_server::server::{build_router, AppState, NonceCache};
-use cloudcookie_server::storage::Storage;
+use cloudcookie_server::storage::{Storage, StorageError};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -19,6 +19,24 @@ use tower::ServiceExt;
 
 fn setup_app(
     auto_register_pending: bool,
+    rate_limit_per_min: u32,
+    enable_nonce_cache: bool,
+    max_slots_per_client: Option<usize>,
+    max_client_storage_bytes: Option<u64>,
+) -> (Router, TempDir, String) {
+    setup_app_with_public_mode(
+        auto_register_pending,
+        false,
+        rate_limit_per_min,
+        enable_nonce_cache,
+        max_slots_per_client,
+        max_client_storage_bytes,
+    )
+}
+
+fn setup_app_with_public_mode(
+    auto_register_pending: bool,
+    public_mode: bool,
     rate_limit_per_min: u32,
     enable_nonce_cache: bool,
     max_slots_per_client: Option<usize>,
@@ -40,6 +58,7 @@ fn setup_app(
         storage,
         admin_token: Arc::new(admin_token.clone()),
         auto_register_pending,
+        public_mode,
         max_body_bytes: 1024 * 1024,
         auth_window_secs: 300,
         enable_nonce_cache,
@@ -548,4 +567,232 @@ async fn test_per_client_slot_and_storage_quotas() {
     let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(body["error"], "storage_quota_exceeded");
+}
+
+#[tokio::test]
+async fn test_public_mode_auto_approves_new_clients_and_respects_revocation() {
+    let (app, _dir, admin_token) =
+        setup_app_with_public_mode(true, true, 0, false, None, None);
+    let root_key = generate_root_key().unwrap();
+    let client_id = derive_client_id(&root_key).unwrap();
+
+    // Unknown client can immediately update without admin approval in PUBLIC mode
+    let enc = encrypt_payload(&root_key, 0, 1, b"public-cookie-data").unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(signed_update_body(&root_key, 0, 0, &enc)))
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["version"], 1);
+
+    // Client can immediately get its stored data
+    let req = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(signed_get_body(&root_key, 0, 0)))
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    let decrypted = decrypt_payload(&root_key, 0, 1, body["encrypted"].as_str().unwrap()).unwrap();
+    assert_eq!(decrypted, b"public-cookie-data");
+
+    // Admin can still revoke a client even in PUBLIC mode
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/admin/clients/{client_id}/revoke"))
+        .header(header::AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["client"]["status"], "revoked");
+
+    // Revoked client is blocked
+    let req = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(signed_get_body(&root_key, 0, 0)))
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "client_revoked");
+}
+
+#[tokio::test]
+async fn test_root_get_help_and_embedded_admin_html() {
+    let (app, _dir, _admin_token) =
+        setup_app_with_public_mode(true, true, 0, false, None, None);
+
+    // GET / returns plain text help
+    let req = Request::builder()
+        .method("GET")
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.starts_with("text/plain"), "unexpected content-type: {ct}");
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(text.contains("CloudCookie Server"));
+    assert!(text.contains("PUBLIC"));
+    assert!(text.contains("/admin.html"));
+
+    // GET /admin.html returns embedded HTML
+    let req = Request::builder()
+        .method("GET")
+        .uri("/admin.html")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.starts_with("text/html"), "unexpected content-type: {ct}");
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(html.contains("<title>CloudCookie Admin</title>"));
+    assert!(html.contains("/admin/clients"));
+    assert!(html.contains("reg-client-id"));
+    assert!(html.contains("Register Client"));
+    assert!(html.contains("/favicon.ico"));
+    assert!(html.contains("/favicon.svg"));
+
+    // GET /favicon.ico returns embedded ICO
+    let req = Request::builder()
+        .method("GET")
+        .uri("/favicon.ico")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(ct, "image/x-icon");
+    let ico_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(ico_bytes.len() > 22);
+    assert_eq!(&ico_bytes[0..4], &[0, 0, 1, 0]);
+
+    // GET /favicon.svg returns embedded SVG
+    let req = Request::builder()
+        .method("GET")
+        .uri("/favicon.svg")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.starts_with("image/svg+xml"), "unexpected content-type: {ct}");
+    let svg_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let svg = String::from_utf8(svg_bytes.to_vec()).unwrap();
+    assert!(svg.contains("<svg"));
+}
+
+#[tokio::test]
+async fn test_private_mode_disables_registration_until_admin_registers() {
+    let (app, _dir, admin_token) =
+        setup_app_with_public_mode(false, false, 0, false, None, None);
+    let root_key = generate_root_key().unwrap();
+    let client_id = derive_client_id(&root_key).unwrap();
+
+    // GET / shows PRIVATE mode
+    let req = Request::builder()
+        .method("GET")
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let body_bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(text.contains("PRIVATE"));
+
+    // Unknown client is rejected with client_unauthorized and NOT recorded as pending
+    let enc = encrypt_payload(&root_key, 0, 1, b"private-secret").unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(signed_update_body(&root_key, 0, 0, &enc)))
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "client_unauthorized");
+
+    // Verify no pending client record was created
+    let req = Request::builder()
+        .method("GET")
+        .uri("/admin/clients")
+        .header(header::AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["clients"].as_array().unwrap().len(), 0);
+
+    // Admin manually registers the client_id via POST /admin/clients
+    let req = Request::builder()
+        .method("POST")
+        .uri("/admin/clients")
+        .header(header::AUTHORIZATION, format!("Bearer {admin_token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "client_id": client_id, "label": "manual-client" }).to_string(),
+        ))
+        .unwrap();
+    let (status, body) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["client"]["status"], "approved");
+
+    // Now the client can update and get
+    let req = Request::builder()
+        .method("POST")
+        .uri("/")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(signed_update_body(&root_key, 0, 0, &enc)))
+        .unwrap();
+    let (status, _) = json_response(app.clone().oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[test]
+fn test_advisory_file_lock_prevents_concurrent_instances() {
+    let dir = TempDir::new().expect("tempdir");
+
+    let first = Storage::load_or_init(dir.path().to_path_buf(), 100, 16, None, None)
+        .expect("first storage instance should acquire lock");
+
+    let second = Storage::load_or_init(dir.path().to_path_buf(), 100, 16, None, None);
+    assert!(
+        matches!(second, Err(StorageError::AlreadyLocked(_))),
+        "second instance on same data_dir should fail with AlreadyLocked"
+    );
+
+    drop(first);
+
+    let third = Storage::load_or_init(dir.path().to_path_buf(), 100, 16, None, None);
+    assert!(
+        third.is_ok(),
+        "storage should acquire lock again after previous instance is dropped"
+    );
 }
