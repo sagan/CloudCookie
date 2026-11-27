@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LocalState, SyncSettings } from '../../../lib/types';
+import type { LocalState, SyncSettings } from '../../../lib/types';
 
 interface SettingsViewProps {
   syncSettings: SyncSettings;

@@ -80,3 +80,7 @@ Encrypted with XAES-256-GCM (`AAD = cloudcookie-v1:<client_id>:<slot>:<version>`
 ```
 
 - `cookies` is keyed by normalized domain (`domain.replace(/^\.+/, '').toLowerCase()`), while each cookie object preserves its original `domain` and `hostOnly` flag for accurate restoration via `browser.cookies.set()`.
+- **Incognito & Container Isolation (`storeId`)**:
+  - The extension manifest sets `"incognito": "not_allowed"`, and cookie collection excludes private/incognito cookie stores so incognito cookies are never uploaded into a normal slot.
+  - Default store IDs (`"0"`, `"firefox-default"`, or omitted) omit `storeId` on import so cookies sync seamlessly between Chrome and Firefox default stores.
+  - Non-default `storeId` values (such as Firefox containers `firefox-container-*`) are preserved on import **only** when the matching `storeId` exists in `browser.cookies.getAllCookieStores()`; otherwise, the cookie is skipped rather than downgraded into the default store.

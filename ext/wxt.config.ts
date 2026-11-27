@@ -8,6 +8,7 @@ export default defineConfig({
   manifest: {
     name: 'CloudCookie',
     description: 'End-to-end encrypted multi-slot cookie synchronization',
+    incognito: 'not_allowed',
     icons: {
       16: '/icon/16.png',
       32: '/icon/32.png',
@@ -21,6 +22,7 @@ export default defineConfig({
       'alarms',
       'unlimitedStorage',
       'activeTab',
+      'clipboardWrite',
     ],
     host_permissions: [
       '<all_urls>',

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   decryptSlot,
   deriveKeys,

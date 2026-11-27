@@ -1,7 +1,13 @@
 import browser from 'webextension-polyfill';
 import { getLocalState } from '../lib/storage';
-import { performUpload } from '../lib/sync';
-import { BackgroundMessage } from '../lib/types';
+import {
+  invalidateUploads,
+  performDeleteAllData,
+  performPurgeTombstoneSlot,
+  performSoftDeleteSlot,
+  performUpload,
+} from '../lib/sync';
+import type { BackgroundMessage } from '../lib/types';
 
 const ALARM_NAME = 'cloudcookie_auto_upload';
 
@@ -53,6 +59,19 @@ export default defineBackground(() => {
     }
     if (msg.type === 'RESCHEDULE_ALARM') {
       return ensureAlarm().then(() => ({ ok: true }));
+    }
+    if (msg.type === 'INVALIDATE_UPLOADS') {
+      invalidateUploads();
+      return Promise.resolve({ ok: true });
+    }
+    if (msg.type === 'SOFT_DELETE_SLOT') {
+      return performSoftDeleteSlot(msg.slot);
+    }
+    if (msg.type === 'PURGE_TOMBSTONE_SLOT') {
+      return performPurgeTombstoneSlot(msg.slot);
+    }
+    if (msg.type === 'DELETE_ALL_DATA') {
+      return performDeleteAllData();
     }
   });
 });

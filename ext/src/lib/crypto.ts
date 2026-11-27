@@ -1,15 +1,12 @@
 import * as ed25519 from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
-import { bytesToHex, hexToBytes, utf8ToBytes, concatBytes } from '@noble/hashes/utils';
-import { ecb, gcm } from '@noble/ciphers/aes';
-import { SyncAction } from './types';
+import { sha512, sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { bytesToHex, hexToBytes, utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
+import { ecb, gcm } from '@noble/ciphers/aes.js';
+import type { SyncAction } from './types';
 
-// Enable synchronous Ed25519 in @noble/ed25519 v2
-ed25519.etc.sha512Sync = (...messages: Uint8Array[]) => {
-  return sha512(ed25519.etc.concatBytes(...messages));
-};
+// Enable synchronous Ed25519 in @noble/ed25519 v3
+ed25519.hashes.sha512 = sha512;
 
 const HKDF_SALT = utf8ToBytes('cloudcookie-v1');
 const HKDF_INFO_AUTH = utf8ToBytes('client-auth-ed25519');
@@ -65,12 +62,12 @@ function cmacSubkey(l: Uint8Array): Uint8Array {
   const k1 = new Uint8Array(16);
   let carry = 0;
   for (let i = 15; i >= 0; i--) {
-    const b = l[i];
+    const b = l[i] ?? 0;
     k1[i] = ((b << 1) | carry) & 0xff;
     carry = (b >>> 7) & 1;
   }
   if (carry) {
-    k1[15] ^= 0x87;
+    k1[15] = (k1[15] ?? 0) ^ 0x87;
   }
   return k1;
 }
@@ -78,7 +75,7 @@ function cmacSubkey(l: Uint8Array): Uint8Array {
 function xor16(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(16);
   for (let i = 0; i < 16; i++) {
-    out[i] = a[i] ^ b[i];
+    out[i] = (a[i] ?? 0) ^ (b[i] ?? 0);
   }
   return out;
 }

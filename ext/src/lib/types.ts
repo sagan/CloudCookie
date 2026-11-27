@@ -3,6 +3,16 @@ export interface SyncSettings {
   root_key: string;
 }
 
+export interface SlotUploadState {
+  last_upload_hash: string | null;
+  last_upload_at: number | null;
+  last_upload_status: 'ok' | 'error' | null;
+  last_upload_error: string | null;
+  last_slot_version: number | null;
+  last_cookie_count: number | null;
+  last_domain_count: number | null;
+}
+
 export interface LocalState {
   using_slot: number | null;
   using_slot_name: string | null;
@@ -16,6 +26,8 @@ export interface LocalState {
   last_slot_version: number | null;
   last_cookie_count: number | null;
   last_domain_count: number | null;
+  highest_slot_versions: Record<string, Record<string, number>>;
+  upload_states: Record<string, SlotUploadState>;
 }
 
 export const DEFAULT_LOCAL_STATE: LocalState = {
@@ -31,6 +43,8 @@ export const DEFAULT_LOCAL_STATE: LocalState = {
   last_slot_version: null,
   last_cookie_count: null,
   last_domain_count: null,
+  highest_slot_versions: {},
+  upload_states: {},
 };
 
 /** Slot 0 (Meta Slot) schema */
@@ -89,7 +103,22 @@ export interface ListSlotEntry {
 export type BackgroundMessage =
   | { type: 'UPLOAD_NOW' }
   | { type: 'GET_STATUS' }
-  | { type: 'RESCHEDULE_ALARM' };
+  | { type: 'RESCHEDULE_ALARM' }
+  | { type: 'INVALIDATE_UPLOADS' }
+  | { type: 'SOFT_DELETE_SLOT'; slot: number }
+  | { type: 'PURGE_TOMBSTONE_SLOT'; slot: number }
+  | { type: 'DELETE_ALL_DATA' };
+
+export interface SoftDeleteResult {
+  ok: boolean;
+  meta?: Slot0Payload;
+  error?: string;
+}
+
+export interface DeleteAllResult {
+  ok: boolean;
+  error?: string;
+}
 
 export interface UploadResult {
   ok: boolean;

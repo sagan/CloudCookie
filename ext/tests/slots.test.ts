@@ -1,8 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError, CloudCookieClient } from '../src/lib/api';
-import { deleteAllServerData, softDeleteSlot } from '../src/lib/slots';
-import { ListSlotEntry, Slot0Payload, SlotDataPayload } from '../src/lib/types';
+import {
+  allocateNextSlotId,
+  deleteAllServerData,
+  fetchSlot0,
+  fetchSlotsWithServerInfo,
+  softDeleteSlot,
+} from '../src/lib/slots';
+import type { ListSlotEntry, Slot0Payload, SlotDataPayload } from '../src/lib/types';
 
 function createMockClient(options?: {
   slot0Version?: number;
@@ -78,23 +84,18 @@ describe('softDeleteSlot', () => {
     await assert.rejects(() => softDeleteSlot(mockClient, 0), /Cannot soft delete meta slot 0/);
   });
 
-  it('marks slot as deleted in slot 0 and replaces slot data with empty placeholder', async () => {
+  it('clears slot data first and then marks slot as deleted in slot 0', async () => {
     const { mockClient, updatedSlots, deletedArgs } = createMockClient();
 
     const result = await softDeleteSlot(mockClient, 2);
 
     assert.equal(deletedArgs.length, 0);
-    assert.equal(result.slots['2'].deleted, true);
-    assert.equal(result.slots['1'].deleted, undefined);
+    assert.equal(result.slots['2']?.deleted, true);
+    assert.equal(result.slots['1']?.deleted, undefined);
 
     assert.equal(updatedSlots.length, 2);
 
-    const slot0Update = updatedSlots[0];
-    assert.equal(slot0Update.slot, 0);
-    assert.equal(slot0Update.expectedVersion, 1);
-    assert.equal((slot0Update.payload as Slot0Payload).slots['2'].deleted, true);
-
-    const slot2Update = updatedSlots[1];
+    const slot2Update = updatedSlots[0]!;
     assert.equal(slot2Update.slot, 2);
     assert.equal(slot2Update.expectedVersion, 3);
     const dataPayload = slot2Update.payload as SlotDataPayload;
@@ -103,21 +104,42 @@ describe('softDeleteSlot', () => {
     assert.equal(dataPayload.cookie_count, 0);
     assert.equal(dataPayload.domain_count, 0);
     assert.deepEqual(dataPayload.cookies, {});
+
+    const slot0Update = updatedSlots[1]!;
+    assert.equal(slot0Update.slot, 0);
+    assert.equal(slot0Update.expectedVersion, 1);
+    assert.equal((slot0Update.payload as Slot0Payload).slots['2']?.deleted, true);
   });
 
-  it('retries on version_conflict for both slot 0 and target slot data', async () => {
+  it('retries on version_conflict for both target slot data and slot 0', async () => {
     const { mockClient, updatedSlots } = createMockClient({
       failFirstSlot0Conflict: true,
       failFirstDataConflict: { currentVersion: 5 },
     });
 
     const result = await softDeleteSlot(mockClient, 2);
-    assert.equal(result.slots['2'].deleted, true);
+    assert.equal(result.slots['2']?.deleted, true);
     assert.equal(updatedSlots.length, 2);
-    assert.equal(updatedSlots[0].slot, 0);
-    assert.equal(updatedSlots[0].expectedVersion, 2);
-    assert.equal(updatedSlots[1].slot, 2);
-    assert.equal(updatedSlots[1].expectedVersion, 5);
+    assert.equal(updatedSlots[0]!.slot, 2);
+    assert.equal(updatedSlots[0]!.expectedVersion, 5);
+    assert.equal(updatedSlots[1]!.slot, 0);
+    assert.equal(updatedSlots[1]!.expectedVersion, 2);
+  });
+
+  it('does not mark slot 0 deleted if clearing slot data fails', async () => {
+    const { mockClient, updatedSlots } = createMockClient();
+    const failingClient = {
+      ...mockClient,
+      async updateSlot(slot: number, expectedVersion: number, payload: unknown) {
+        if (slot === 2) {
+          throw new ApiError(500, 'network_error', 'Server unreachable');
+        }
+        return mockClient.updateSlot(slot, expectedVersion, payload);
+      },
+    } as unknown as CloudCookieClient;
+
+    await assert.rejects(() => softDeleteSlot(failingClient, 2), /Server unreachable/);
+    assert.equal(updatedSlots.length, 0);
   });
 });
 
@@ -151,5 +173,71 @@ describe('deleteAllServerData', () => {
       },
     } as unknown as CloudCookieClient;
     await assert.rejects(() => deleteAllServerData(unauthorized), /Bad sig/);
+  });
+});
+
+describe('slot rollback & allocation', () => {
+  it('rejects no_data for slot 0 when highestSeen > 0', async () => {
+    const client = {
+      async getSlot() {
+        throw new ApiError(404, 'no_data', 'Not found');
+      },
+      async getHighestSeenVersion(slot: number) {
+        return slot === 0 ? 2 : 0;
+      },
+    } as unknown as CloudCookieClient;
+
+    await assert.rejects(
+      () => fetchSlot0(client),
+      (err: unknown) => err instanceof ApiError && err.code === 'rollback_detected',
+    );
+  });
+
+  it('rejects listSlots entry with version lower than highestSeen', async () => {
+    const client = {
+      async getSlot<T>() {
+        return {
+          slot: 0,
+          version: 2,
+          updated_at: '2026-01-01T00:00:00Z',
+          data: { schema_version: 1, updated_at: 1000, slots: {} } as unknown as T,
+        };
+      },
+      async listSlots(): Promise<ListSlotEntry[]> {
+        return [{ slot: 5, version: 1, updated_at: '2026-01-01T00:00:00Z', size_bytes: 10 }];
+      },
+      async getHighestSeenVersion(slot: number) {
+        return slot === 5 ? 4 : 0;
+      },
+    } as unknown as CloudCookieClient;
+
+    await assert.rejects(
+      () => fetchSlotsWithServerInfo(client),
+      (err: unknown) => err instanceof ApiError && err.code === 'rollback_detected',
+    );
+  });
+
+  it('allocates random unused slot IDs and avoids tombstoned or server-listed slots', () => {
+    const meta: Slot0Payload = {
+      schema_version: 1,
+      updated_at: 1000,
+      slots: {
+        '1': { slot: 1, name: 'Active', created_at: 1000, updated_at: 1000 },
+        '2': { slot: 2, name: 'Deleted', created_at: 1000, updated_at: 1000, deleted: true },
+      },
+    };
+    const serverSlots = new Map<number, ListSlotEntry>([
+      [3, { slot: 3, version: 1, updated_at: '2026-01-01T00:00:00Z', size_bytes: 50 }],
+    ]);
+
+    const picks = new Set<number>();
+    for (let i = 0; i < 25; i++) {
+      const id = allocateNextSlotId(meta, serverSlots);
+      assert.ok(Number.isInteger(id) && id >= 1 && id <= 1023);
+      assert.ok(id !== 1 && id !== 2 && id !== 3);
+      picks.add(id);
+    }
+    // Random allocation should not always return the same deterministic number
+    assert.ok(picks.size > 1);
   });
 });

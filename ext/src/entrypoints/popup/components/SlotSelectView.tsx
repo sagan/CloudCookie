@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ListSlotEntry, Slot0Payload } from '../../../lib/types';
+import type { ListSlotEntry, Slot0Payload } from '../../../lib/types';
 
 interface SlotSelectViewProps {
   meta: Slot0Payload;
@@ -8,6 +8,7 @@ interface SlotSelectViewProps {
   onSelectSlot: (slot: number, name: string) => Promise<void>;
   onCreateSlot: (name: string) => Promise<void>;
   onSoftDeleteSlot: (slot: number) => Promise<void>;
+  onPurgeTombstoneSlot: (slot: number) => Promise<void>;
   onRefresh: () => Promise<void>;
   onCancel?: () => void;
 }
@@ -19,16 +20,22 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
   onSelectSlot,
   onCreateSlot,
   onSoftDeleteSlot,
+  onPurgeTombstoneSlot,
   onRefresh,
   onCancel,
 }) => {
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmDeleteSlot, setConfirmDeleteSlot] = useState<number | null>(null);
+  const [confirmPurgeSlot, setConfirmPurgeSlot] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const slotEntries = Object.values(meta.slots)
     .filter((entry) => !entry.deleted)
+    .sort((a, b) => a.slot - b.slot);
+
+  const deletedEntries = Object.values(meta.slots)
+    .filter((entry) => entry.deleted)
     .sort((a, b) => a.slot - b.slot);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -73,6 +80,31 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
     }
   };
 
+  const handlePurgeTombstone = async (slot: number) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onPurgeTombstoneSlot(slot);
+      setConfirmPurgeSlot(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -84,7 +116,7 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
         </div>
         <button
           type="button"
-          onClick={() => void onRefresh()}
+          onClick={() => void handleRefresh()}
           disabled={busy}
           className="text-xs px-2.5 py-1 rounded bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 font-medium"
         >
@@ -211,6 +243,56 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
           </button>
         </div>
       </form>
+
+      {deletedEntries.length > 0 && (
+        <div className="p-2.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-1.5">
+          <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+            Deleted Slots ({deletedEntries.length})
+          </div>
+          <div className="space-y-1 max-h-28 overflow-y-auto">
+            {deletedEntries.map((entry) => (
+              <div
+                key={entry.slot}
+                className="flex items-center justify-between text-xs py-1 px-2 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              >
+                <span className="truncate text-slate-600 dark:text-slate-300">
+                  <span className="font-mono">#{entry.slot}</span> {entry.name}
+                </span>
+                {confirmPurgeSlot === entry.slot ? (
+                  <div className="shrink-0 flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void handlePurgeTombstone(entry.slot)}
+                      className="px-2 py-0.5 text-[11px] font-semibold rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-60"
+                    >
+                      Confirm Purge
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmPurgeSlot(null)}
+                      className="px-2 py-0.5 text-[11px] rounded border border-slate-300 dark:border-slate-600"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmPurgeSlot(entry.slot)}
+                    className="shrink-0 px-2 py-0.5 text-[11px] font-medium rounded text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
+                    title="Permanently delete server blob and tombstone"
+                  >
+                    Purge
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-200">

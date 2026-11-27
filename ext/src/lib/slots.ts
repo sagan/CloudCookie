@@ -1,7 +1,19 @@
 import { ApiError, CloudCookieClient } from './api';
-import { ListSlotEntry, Slot0Payload, SlotDataPayload } from './types';
+import type { ListSlotEntry, Slot0Payload, SlotDataPayload } from './types';
 
 const MAX_CAS_RETRIES = 4;
+const MAX_SLOT_ID = 1023;
+
+function randomIndex(length: number): number {
+  const buf = new Uint32Array(1);
+  const limit = Math.floor(0x100000000 / length) * length;
+  let value: number;
+  do {
+    crypto.getRandomValues(buf);
+    value = buf[0] ?? 0;
+  } while (value >= limit);
+  return value % length;
+}
 
 export function emptySlot0(): Slot0Payload {
   return {
@@ -24,6 +36,17 @@ export async function fetchSlot0(
     return { meta, version: res.version };
   } catch (err) {
     if (err instanceof ApiError && err.code === 'no_data') {
+      const highestSeen =
+        typeof client.getHighestSeenVersion === 'function'
+          ? await client.getHighestSeenVersion(0)
+          : 0;
+      if (highestSeen > 0) {
+        throw new ApiError(
+          404,
+          'rollback_detected',
+          `Rollback detected for meta slot 0: server returned no_data, but locally recorded version is ${highestSeen}.`,
+        );
+      }
       return { meta: emptySlot0(), version: 0 };
     }
     throw err;
@@ -38,6 +61,16 @@ export async function fetchSlotsWithServerInfo(client: CloudCookieClient): Promi
   const [listEntries, slot0] = await Promise.all([client.listSlots(), fetchSlot0(client)]);
   const serverSlots = new Map<number, ListSlotEntry>();
   for (const entry of listEntries) {
+    if (typeof client.getHighestSeenVersion === 'function') {
+      const highestSeen = await client.getHighestSeenVersion(entry.slot);
+      if (entry.version < highestSeen) {
+        throw new ApiError(
+          200,
+          'rollback_detected',
+          `Rollback detected in slot list for slot ${entry.slot}: server listed version ${entry.version}, which is lower than locally recorded version ${highestSeen}.`,
+        );
+      }
+    }
     serverSlots.set(entry.slot, entry);
   }
   return {
@@ -47,7 +80,10 @@ export async function fetchSlotsWithServerInfo(client: CloudCookieClient): Promi
   };
 }
 
-function allocateNextSlotId(meta: Slot0Payload, serverSlots: Map<number, ListSlotEntry>): number {
+export function allocateNextSlotId(
+  meta: Slot0Payload,
+  serverSlots: Map<number, ListSlotEntry>,
+): number {
   const used = new Set<number>();
   for (const key of Object.keys(meta.slots)) {
     const n = Number(key);
@@ -56,11 +92,16 @@ function allocateNextSlotId(meta: Slot0Payload, serverSlots: Map<number, ListSlo
   for (const slot of serverSlots.keys()) {
     if (Number.isInteger(slot) && slot >= 1) used.add(slot);
   }
-  let candidate = 1;
-  while (used.has(candidate)) {
-    candidate++;
+  const available: number[] = [];
+  for (let candidate = 1; candidate <= MAX_SLOT_ID; candidate++) {
+    if (!used.has(candidate)) {
+      available.push(candidate);
+    }
   }
-  return candidate;
+  if (available.length === 0) {
+    throw new Error(`No available slot IDs remaining (max ${MAX_SLOT_ID})`);
+  }
+  return available[randomIndex(available.length)]!;
 }
 
 export async function createNewSlot(
@@ -157,9 +198,48 @@ export async function softDeleteSlot(client: CloudCookieClient, slot: number): P
     throw new Error('Cannot soft delete meta slot 0');
   }
 
-  let updatedMeta: Slot0Payload | null = null;
+  // 1. Clear the slot's cookie data first so a failure never hides un-deleted cookies.
+  const serverSlots = await client.listSlots();
+  const existingServerSlot = serverSlots.find((s) => s.slot === slot);
+  if (existingServerSlot) {
+    let expectedVersion = existingServerSlot.version;
+    let dataCleared = false;
 
-  // 1. Update metadata in slot 0 to mark the slot as no longer used.
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+      const emptyPayload: SlotDataPayload = {
+        schema_version: 1,
+        slot,
+        instance_name: '',
+        updated_at: Date.now(),
+        cookie_count: 0,
+        domain_count: 0,
+        cookies: {},
+      };
+
+      try {
+        await client.updateSlot(slot, expectedVersion, emptyPayload);
+        dataCleared = true;
+        break;
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'version_conflict' && attempt < MAX_CAS_RETRIES - 1) {
+          if (err.currentVersion !== undefined) {
+            expectedVersion = err.currentVersion;
+          } else {
+            const refreshed = await client.listSlots();
+            expectedVersion = refreshed.find((s) => s.slot === slot)?.version ?? 0;
+          }
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!dataCleared) {
+      throw new Error(`Failed to clear slot ${slot} data due to concurrent updates`);
+    }
+  }
+
+  // 2. Mark the slot as deleted in slot 0 metadata only after data is cleared.
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     const { meta, version } = await fetchSlot0(client);
     const existing = meta.slots[String(slot)];
@@ -182,8 +262,7 @@ export async function softDeleteSlot(client: CloudCookieClient, slot: number): P
 
     try {
       await client.updateSlot(0, version, nextMeta);
-      updatedMeta = nextMeta;
-      break;
+      return nextMeta;
     } catch (err) {
       if (err instanceof ApiError && err.code === 'version_conflict' && attempt < MAX_CAS_RETRIES - 1) {
         continue;
@@ -192,43 +271,7 @@ export async function softDeleteSlot(client: CloudCookieClient, slot: number): P
     }
   }
 
-  if (!updatedMeta) {
-    throw new Error('Failed to update slot 0 metadata while soft deleting slot');
-  }
-
-  // 2. Update the slot's data to an empty placeholder.
-  const serverSlots = await client.listSlots();
-  let expectedVersion = serverSlots.find((s) => s.slot === slot)?.version ?? 0;
-
-  for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
-    const emptyPayload: SlotDataPayload = {
-      schema_version: 1,
-      slot,
-      instance_name: '',
-      updated_at: Date.now(),
-      cookie_count: 0,
-      domain_count: 0,
-      cookies: {},
-    };
-
-    try {
-      await client.updateSlot(slot, expectedVersion, emptyPayload);
-      return updatedMeta;
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'version_conflict' && attempt < MAX_CAS_RETRIES - 1) {
-        if (err.currentVersion !== undefined) {
-          expectedVersion = err.currentVersion;
-        } else {
-          const refreshed = await client.listSlots();
-          expectedVersion = refreshed.find((s) => s.slot === slot)?.version ?? 0;
-        }
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new Error(`Failed to clear slot ${slot} data due to concurrent updates`);
+  throw new Error('Failed to update slot 0 metadata while soft deleting slot');
 }
 
 export async function deleteAllServerData(client: CloudCookieClient): Promise<void> {

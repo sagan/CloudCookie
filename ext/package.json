@@ -17,24 +17,27 @@
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
-    "@types/chrome": "^0.1.3",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@types/webextension-polyfill": "^0.12.3",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.15",
-    "tsx": "^4.19.2",
-    "typescript": "^5.8.3",
-    "wxt": "^0.20.6"
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/chrome": "^0.3.8",
+    "@types/node": "^26.6.11",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "@types/webextension-polyfill": "^0.12.6",
+    "autoprefixer": "^10.7.0",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "wxt": "^0.21.5"
   },
   "dependencies": {
-    "@noble/ciphers": "^1.2.1",
-    "@noble/ed25519": "^2.2.3",
-    "@noble/hashes": "^1.7.1",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/ed25519": "^3.2.0",
+    "@noble/hashes": "^2.4.0",
     "@wxt-dev/webextension-polyfill": "^1.0.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tldts": "^7.6.1",
     "webextension-polyfill": "^0.12.0"
   }
 }

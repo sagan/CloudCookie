@@ -1,9 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, CloudCookieClient } from '../../../lib/api';
+import {
+  COOKIE_EXPORT_FORMATS,
+  collectCookiesForDomains,
+  formatCookiesForExport,
+  type CookieExportFormat,
+} from '../../../lib/cookieExport';
 import { importCookies } from '../../../lib/cookies';
 import { filterDomainsForMode, getBaseDomain } from '../../../lib/domains';
 import { fetchSlotCookies } from '../../../lib/slots';
-import { ListSlotEntry, Slot0Payload, SlotDataPayload } from '../../../lib/types';
+import type { ListSlotEntry, Slot0Payload, SlotDataPayload } from '../../../lib/types';
+import { CopyCookieButton } from './CopyCookieButton';
 
 type ImportMode = 'base_domain' | 'domain' | 'all';
 
@@ -14,6 +21,30 @@ interface ImportViewProps {
   currentSlot: number;
   activeHostname: string | null;
   onRefreshSlots: () => Promise<void>;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fallback below for environments where Clipboard API is restricted
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!ok) {
+    throw new Error('Failed to copy to clipboard');
+  }
 }
 
 export const ImportView: React.FC<ImportViewProps> = ({
@@ -31,15 +62,18 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const [importing, setImporting] = useState(false);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<string | null>(null);
+  const [openCopyMenuId, setOpenCopyMenuId] = useState<string | null>(null);
 
-  const otherSlots = useMemo(
+  const visibleSlots = useMemo(
     () =>
       Object.values(meta.slots)
-        .filter((s) => !s.deleted && s.slot !== currentSlot)
+        .filter((s) => !s.deleted)
         .sort((a, b) => a.slot - b.slot),
-    [meta, currentSlot],
+    [meta],
   );
+
+  const isSelfSlot = selectedSlot === currentSlot;
 
   const baseDomain = useMemo(
     () => (activeHostname ? getBaseDomain(activeHostname) : null),
@@ -51,7 +85,8 @@ export const ImportView: React.FC<ImportViewProps> = ({
       setSelectedSlot(slot);
       setSlotData(null);
       setError(null);
-      setImportResult(null);
+      setActionResult(null);
+      setOpenCopyMenuId(null);
       setLoading(true);
       try {
         const res = await fetchSlotCookies(client, slot);
@@ -69,25 +104,29 @@ export const ImportView: React.FC<ImportViewProps> = ({
     [client],
   );
 
-  // Auto-select the best available source slot on open so cookies load immediately
+  // Auto-select the best available source slot on open (prefer other slots for importing, else self)
   useEffect(() => {
-    if (otherSlots.length === 0) {
+    if (visibleSlots.length === 0) {
       setSelectedSlot(null);
       setSlotData(null);
       return;
     }
-    const stillValid = selectedSlot !== null && otherSlots.some((s) => s.slot === selectedSlot);
+    const stillValid = selectedSlot !== null && visibleSlots.some((s) => s.slot === selectedSlot);
     if (!stillValid) {
-      const slotsWithData = otherSlots.filter((s) => serverSlots.has(s.slot));
+      const otherSlots = visibleSlots.filter((s) => s.slot !== currentSlot);
+      const candidates = otherSlots.length > 0 ? otherSlots : visibleSlots;
+      const slotsWithData = candidates.filter((s) => serverSlots.has(s.slot));
       const preferred =
         slotsWithData.sort((a, b) => {
           const tA = Date.parse(serverSlots.get(a.slot)?.updated_at ?? '') || 0;
           const tB = Date.parse(serverSlots.get(b.slot)?.updated_at ?? '') || 0;
           return tB - tA;
-        })[0] ?? otherSlots[0];
-      void loadSlot(preferred.slot);
+        })[0] ?? candidates[0];
+      if (preferred) {
+        void loadSlot(preferred.slot);
+      }
     }
-  }, [otherSlots, serverSlots, selectedSlot, loadSlot]);
+  }, [visibleSlots, currentSlot, serverSlots, selectedSlot, loadSlot]);
 
   const modeDomainKeys = useMemo(() => {
     if (!slotData?.cookies) return [];
@@ -108,9 +147,9 @@ export const ImportView: React.FC<ImportViewProps> = ({
   );
 
   const handleImportDomains = async (domains?: string[]) => {
-    if (!slotData?.cookies) return;
+    if (!slotData?.cookies || isSelfSlot) return;
     setImporting(true);
-    setImportResult(null);
+    setActionResult(null);
     setError(null);
     try {
       const res = await importCookies(slotData.cookies, domains);
@@ -120,13 +159,30 @@ export const ImportView: React.FC<ImportViewProps> = ({
           : domains
             ? `${domains.length} domains`
             : 'all websites';
-      setImportResult(
+      setActionResult(
         `Imported ${res.imported} cookie(s) for ${scope}${res.failed > 0 ? ` (${res.failed} failed)` : ''}.`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleCopyDomains = async (format: CookieExportFormat, domains?: string[]) => {
+    if (!slotData?.cookies) return;
+    setActionResult(null);
+    setError(null);
+    try {
+      const cookies = collectCookiesForDomains(slotData.cookies, domains);
+      const formatted = formatCookiesForExport(cookies, format);
+      await copyTextToClipboard(formatted);
+      const formatLabel = COOKIE_EXPORT_FORMATS.find((f) => f.id === format)?.label ?? format;
+      setActionResult(
+        `Copied ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} as ${formatLabel} to clipboard.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -141,34 +197,53 @@ export const ImportView: React.FC<ImportViewProps> = ({
         </span>
         <button
           type="button"
-          onClick={() => void onRefreshSlots()}
+          onClick={() => {
+            setError(null);
+            void onRefreshSlots().catch((err) => {
+              setError(err instanceof Error ? err.message : String(err));
+            });
+          }}
           className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
         >
           Refresh List
         </button>
       </div>
 
-      {otherSlots.length === 0 ? (
+      {visibleSlots.length === 0 ? (
         <div className="p-4 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500 dark:text-slate-400">
-          No other browser slots found. Install CloudCookie on another browser with the same Root Key to import cookies from it.
+          No browser slots found.
         </div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
-          {otherSlots.map((s) => {
+          {visibleSlots.map((s) => {
             const active = selectedSlot === s.slot;
             const hasData = serverSlots.has(s.slot);
+            const isSelf = s.slot === currentSlot;
             return (
               <button
                 key={s.slot}
                 type="button"
                 onClick={() => void loadSlot(s.slot)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   active
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:border-blue-400'
                 } ${!hasData ? 'opacity-60' : ''}`}
               >
-                #{s.slot} {s.name}
+                <span>
+                  #{s.slot} {s.name}
+                </span>
+                {isSelf && (
+                  <span
+                    className={`px-1 py-0.5 text-[10px] leading-none rounded font-semibold ${
+                      active
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    self
+                  </span>
+                )}
               </button>
             );
           })}
@@ -176,11 +251,14 @@ export const ImportView: React.FC<ImportViewProps> = ({
       )}
 
       {/* Mode Switcher */}
-      {otherSlots.length > 0 && (
+      {visibleSlots.length > 0 && (
         <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium">
           <button
             type="button"
-            onClick={() => setMode('base_domain')}
+            onClick={() => {
+              setMode('base_domain');
+              setOpenCopyMenuId(null);
+            }}
             className={`py-1.5 px-2 rounded-md transition-colors ${
               mode === 'base_domain'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm font-semibold'
@@ -191,7 +269,10 @@ export const ImportView: React.FC<ImportViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setMode('domain')}
+            onClick={() => {
+              setMode('domain');
+              setOpenCopyMenuId(null);
+            }}
             className={`py-1.5 px-2 rounded-md transition-colors ${
               mode === 'domain'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm font-semibold'
@@ -202,7 +283,10 @@ export const ImportView: React.FC<ImportViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setMode('all')}
+            onClick={() => {
+              setMode('all');
+              setOpenCopyMenuId(null);
+            }}
             className={`py-1.5 px-2 rounded-md transition-colors ${
               mode === 'all'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm font-semibold'
@@ -226,9 +310,9 @@ export const ImportView: React.FC<ImportViewProps> = ({
         </div>
       )}
 
-      {importResult && (
+      {actionResult && (
         <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 font-medium">
-          {importResult}
+          {actionResult}
         </div>
       )}
 
@@ -257,16 +341,28 @@ export const ImportView: React.FC<ImportViewProps> = ({
                         : 'Open a website tab or switch to All mode'}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={importing || matchedCookieCount === 0}
-                    onClick={() => void handleImportDomains(modeDomainKeys)}
-                    className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-                  >
-                    {importing
-                      ? 'Importing...'
-                      : `Import${matchedCookieCount > 0 ? ` (${matchedCookieCount})` : ''}`}
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {!isSelfSlot && (
+                      <button
+                        type="button"
+                        disabled={importing || matchedCookieCount === 0}
+                        onClick={() => void handleImportDomains(modeDomainKeys)}
+                        className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                      >
+                        {importing
+                          ? 'Importing...'
+                          : `Import${matchedCookieCount > 0 ? ` (${matchedCookieCount})` : ''}`}
+                      </button>
+                    )}
+                    <CopyCookieButton
+                      menuId="summary-filtered"
+                      openMenuId={openCopyMenuId}
+                      onToggleMenu={setOpenCopyMenuId}
+                      disabled={matchedCookieCount === 0}
+                      variant="primary"
+                      onSelectFormat={(format) => void handleCopyDomains(format, modeDomainKeys)}
+                    />
+                  </div>
                 </div>
                 <div className="text-[10px] text-slate-500 dark:text-slate-400">
                   Snapshot: {new Date(slotData.updated_at).toLocaleString()}
@@ -293,21 +389,32 @@ export const ImportView: React.FC<ImportViewProps> = ({
                   {filteredDomains.map(([domain, cookies]) => {
                     const rawDomains = Array.from(new Set(cookies.map((c) => c.domain))).join(', ');
                     return (
-                      <div key={domain} className="flex items-center justify-between px-3 py-2">
-                        <div className="min-w-0 pr-2">
+                      <div key={domain} className="flex items-center justify-between px-3 py-2 gap-2">
+                        <div className="min-w-0">
                           <div className="text-xs font-medium truncate">{domain}</div>
                           <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                             {cookies.length} cookie{cookies.length === 1 ? '' : 's'} ({rawDomains})
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          disabled={importing}
-                          onClick={() => void handleImportDomains([domain])}
-                          className="shrink-0 px-2.5 py-1 text-xs font-medium rounded bg-slate-200 hover:bg-blue-600 hover:text-white dark:bg-slate-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-60"
-                        >
-                          Import
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {!isSelfSlot && (
+                            <button
+                              type="button"
+                              disabled={importing}
+                              onClick={() => void handleImportDomains([domain])}
+                              className="shrink-0 px-2.5 py-1 text-xs font-medium rounded bg-slate-200 hover:bg-blue-600 hover:text-white dark:bg-slate-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-60"
+                            >
+                              Import
+                            </button>
+                          )}
+                          <CopyCookieButton
+                            menuId={`domain:${domain}`}
+                            openMenuId={openCopyMenuId}
+                            onToggleMenu={setOpenCopyMenuId}
+                            disabled={cookies.length === 0}
+                            onSelectFormat={(format) => void handleCopyDomains(format, [domain])}
+                          />
+                        </div>
                       </div>
                     );
                   })}
@@ -316,8 +423,8 @@ export const ImportView: React.FC<ImportViewProps> = ({
             </>
           ) : (
             <>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                <div className="text-xs">
+              <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <div className="text-xs min-w-0">
                   <div className="font-semibold">
                     {slotData.cookie_count} cookies · {slotData.domain_count} websites
                   </div>
@@ -325,14 +432,26 @@ export const ImportView: React.FC<ImportViewProps> = ({
                     Snapshot: {new Date(slotData.updated_at).toLocaleString()}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  disabled={importing || slotData.cookie_count === 0}
-                  onClick={() => void handleImportDomains(undefined)}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60"
-                >
-                  {importing ? 'Importing...' : 'Import All'}
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!isSelfSlot && (
+                    <button
+                      type="button"
+                      disabled={importing || slotData.cookie_count === 0}
+                      onClick={() => void handleImportDomains(undefined)}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60"
+                    >
+                      {importing ? 'Importing...' : 'Import All'}
+                    </button>
+                  )}
+                  <CopyCookieButton
+                    menuId="summary-all"
+                    openMenuId={openCopyMenuId}
+                    onToggleMenu={setOpenCopyMenuId}
+                    disabled={slotData.cookie_count === 0}
+                    variant="primary"
+                    onSelectFormat={(format) => void handleCopyDomains(format, undefined)}
+                  />
+                </div>
               </div>
 
               <input
@@ -348,21 +467,32 @@ export const ImportView: React.FC<ImportViewProps> = ({
                   <div className="p-3 text-center text-xs text-slate-500">No matching domains</div>
                 ) : (
                   filteredDomains.map(([domain, cookies]) => (
-                    <div key={domain} className="flex items-center justify-between px-3 py-2">
-                      <div className="min-w-0 pr-2">
+                    <div key={domain} className="flex items-center justify-between px-3 py-2 gap-2">
+                      <div className="min-w-0">
                         <div className="text-xs font-medium truncate">{domain}</div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400">
                           {cookies.length} cookie{cookies.length === 1 ? '' : 's'}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        disabled={importing}
-                        onClick={() => void handleImportDomains([domain])}
-                        className="shrink-0 px-2.5 py-1 text-xs font-medium rounded bg-slate-200 hover:bg-blue-600 hover:text-white dark:bg-slate-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-60"
-                      >
-                        Import
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isSelfSlot && (
+                          <button
+                            type="button"
+                            disabled={importing}
+                            onClick={() => void handleImportDomains([domain])}
+                            className="shrink-0 px-2.5 py-1 text-xs font-medium rounded bg-slate-200 hover:bg-blue-600 hover:text-white dark:bg-slate-700 dark:hover:bg-blue-600 transition-colors disabled:opacity-60"
+                          >
+                            Import
+                          </button>
+                        )}
+                        <CopyCookieButton
+                          menuId={`all-domain:${domain}`}
+                          openMenuId={openCopyMenuId}
+                          onToggleMenu={setOpenCopyMenuId}
+                          disabled={cookies.length === 0}
+                          onSelectFormat={(format) => void handleCopyDomains(format, [domain])}
+                        />
+                      </div>
                     </div>
                   ))
                 )}

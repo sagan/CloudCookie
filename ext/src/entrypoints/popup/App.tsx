@@ -1,17 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import browser from 'webextension-polyfill';
-import { ApiError, CloudCookieClient } from '../../lib/api';
+import { ApiError, CloudCookieClient, normalizeServerUrl } from '../../lib/api';
 import { extractHostnameFromUrl } from '../../lib/domains';
 import { isValidRootKey } from '../../lib/crypto';
 import {
   createNewSlot,
-  deleteAllServerData,
   fetchSlotsWithServerInfo,
   renameSlot,
-  softDeleteSlot,
 } from '../../lib/slots';
 import {
-  clearAllExtensionData,
   clearSlotBinding,
   getLocalState,
   getSyncSettings,
@@ -20,11 +17,13 @@ import {
 } from '../../lib/storage';
 import {
   DEFAULT_LOCAL_STATE,
-  ListSlotEntry,
-  LocalState,
-  Slot0Payload,
-  SyncSettings,
-  UploadResult,
+  type DeleteAllResult,
+  type ListSlotEntry,
+  type LocalState,
+  type Slot0Payload,
+  type SoftDeleteResult,
+  type SyncSettings,
+  type UploadResult,
 } from '../../lib/types';
 import { ImportView } from './components/ImportView';
 import { SettingsView } from './components/SettingsView';
@@ -66,8 +65,28 @@ const App: React.FC = () => {
       setAuthMessage(null);
       try {
         const c = new CloudCookieClient(url, key);
-        await saveSyncSettings({ server_url: url, root_key: key });
-        setSyncSettings({ server_url: url, root_key: key });
+        const prevSync = await getSyncSettings();
+        let prevNormalizedUrl = '';
+        try {
+          prevNormalizedUrl = prevSync.server_url ? normalizeServerUrl(prevSync.server_url) : '';
+        } catch {
+          prevNormalizedUrl = prevSync.server_url;
+        }
+        const connectionChanged =
+          (prevNormalizedUrl !== '' && prevNormalizedUrl !== c.serverUrl) ||
+          (prevSync.root_key !== '' && prevSync.root_key !== key);
+
+        let effectiveUsingSlot = currentUsingSlot;
+        if (connectionChanged) {
+          await browser.runtime.sendMessage({ type: 'INVALIDATE_UPLOADS' }).catch(() => {});
+          await clearSlotBinding();
+          setLocalState(await getLocalState());
+          setUploadBanner(null);
+          effectiveUsingSlot = null;
+        }
+
+        await saveSyncSettings({ server_url: c.serverUrl, root_key: key });
+        setSyncSettings({ server_url: c.serverUrl, root_key: key });
 
         const { meta: fetchedMeta, serverSlots: fetchedServerSlots } =
           await fetchSlotsWithServerInfo(c);
@@ -76,14 +95,14 @@ const App: React.FC = () => {
         setServerSlots(fetchedServerSlots);
         setAuthStatus('idle');
 
-        const currentMetaEntry = currentUsingSlot
-          ? fetchedMeta.slots[String(currentUsingSlot)]
+        const currentMetaEntry = effectiveUsingSlot
+          ? fetchedMeta.slots[String(effectiveUsingSlot)]
           : undefined;
 
-        if (currentUsingSlot && currentMetaEntry && !currentMetaEntry.deleted) {
+        if (effectiveUsingSlot && currentMetaEntry && !currentMetaEntry.deleted) {
           setScreen('main');
         } else {
-          if (currentUsingSlot && currentMetaEntry?.deleted) {
+          if (effectiveUsingSlot && currentMetaEntry?.deleted) {
             await clearSlotBinding();
             setLocalState(await getLocalState());
           }
@@ -167,19 +186,35 @@ const App: React.FC = () => {
 
   const handleSelectSlot = async (slot: number, name: string) => {
     const srv = serverSlots.get(slot);
+    const highestSeen = client ? await client.getHighestSeenVersion(slot) : 0;
+    if (srv !== undefined && srv.version < highestSeen) {
+      throw new ApiError(
+        200,
+        'rollback_detected',
+        `Rollback detected for slot ${slot}: server listed version ${srv.version}, which is lower than locally recorded version ${highestSeen}.`,
+      );
+    }
+    await browser.runtime.sendMessage({ type: 'INVALIDATE_UPLOADS' }).catch(() => {});
     await saveLocalState({
       using_slot: slot,
       using_slot_name: name,
-      last_slot_version: srv?.version ?? 0,
+      last_slot_version: Math.max(srv?.version ?? 0, highestSeen),
       last_upload_hash: null,
+      last_upload_at: null,
+      last_upload_status: null,
+      last_upload_error: null,
+      last_cookie_count: null,
+      last_domain_count: null,
     });
     setLocalState(await getLocalState());
+    setUploadBanner(null);
     setScreen('main');
     void triggerUploadNow();
   };
 
   const handleCreateSlot = async (name: string) => {
     if (!client) return;
+    await browser.runtime.sendMessage({ type: 'INVALIDATE_UPLOADS' }).catch(() => {});
     const res = await createNewSlot(client, name);
     setMeta(res.meta);
     await saveLocalState({
@@ -187,8 +222,14 @@ const App: React.FC = () => {
       using_slot_name: name,
       last_slot_version: 0,
       last_upload_hash: null,
+      last_upload_at: null,
+      last_upload_status: null,
+      last_upload_error: null,
+      last_cookie_count: null,
+      last_domain_count: null,
     });
     setLocalState(await getLocalState());
+    setUploadBanner(null);
     setScreen('main');
     void triggerUploadNow();
   };
@@ -209,8 +250,14 @@ const App: React.FC = () => {
 
   const handleSoftDeleteSlot = async (slot: number) => {
     if (!client) return;
-    const updatedMeta = await softDeleteSlot(client, slot);
-    setMeta(updatedMeta);
+    const res = (await browser.runtime.sendMessage({
+      type: 'SOFT_DELETE_SLOT',
+      slot,
+    })) as SoftDeleteResult;
+    if (!res?.ok || !res.meta) {
+      throw new Error(res?.error || 'Failed to soft delete slot');
+    }
+    setMeta(res.meta);
 
     const refreshedSlots = await client.listSlots();
     const nextServerSlots = new Map<number, ListSlotEntry>();
@@ -220,17 +267,39 @@ const App: React.FC = () => {
     setServerSlots(nextServerSlots);
 
     if (localState.using_slot === slot) {
-      await clearSlotBinding();
       setLocalState(await getLocalState());
       setUploadBanner(null);
       setScreen('slot_select');
     }
   };
 
+  const handlePurgeTombstoneSlot = async (slot: number) => {
+    if (!client) return;
+    const res = (await browser.runtime.sendMessage({
+      type: 'PURGE_TOMBSTONE_SLOT',
+      slot,
+    })) as SoftDeleteResult;
+    if (!res?.ok || !res.meta) {
+      throw new Error(res?.error || 'Failed to purge deleted slot');
+    }
+    setMeta(res.meta);
+
+    const refreshedSlots = await client.listSlots();
+    const nextServerSlots = new Map<number, ListSlotEntry>();
+    for (const entry of refreshedSlots) {
+      nextServerSlots.set(entry.slot, entry);
+    }
+    setServerSlots(nextServerSlots);
+  };
+
   const handleDeleteAllData = async () => {
     if (!client) return;
-    await deleteAllServerData(client);
-    await clearAllExtensionData();
+    const res = (await browser.runtime.sendMessage({
+      type: 'DELETE_ALL_DATA',
+    })) as DeleteAllResult;
+    if (!res?.ok) {
+      throw new Error(res?.error || 'Failed to delete all data');
+    }
     setSyncSettings({ server_url: '', root_key: '' });
     setLocalState(DEFAULT_LOCAL_STATE);
     setMeta({ schema_version: 1, updated_at: 0, slots: {} });
@@ -286,6 +355,7 @@ const App: React.FC = () => {
             onSelectSlot={handleSelectSlot}
             onCreateSlot={handleCreateSlot}
             onSoftDeleteSlot={handleSoftDeleteSlot}
+            onPurgeTombstoneSlot={handlePurgeTombstoneSlot}
             onRefresh={refreshSlots}
             onCancel={localState.using_slot ? () => setScreen('main') : undefined}
           />

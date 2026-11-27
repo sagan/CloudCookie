@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[command(name = "cloudcookie-server", about = "CloudCookie E2E encrypted cookie sync server")]
 pub struct Config {
     /// Address and port to listen on
-    #[arg(long, env = "CLOUDCOOKIE_LISTEN", default_value = "0.0.0.0:6767")]
+    #[arg(long, env = "CLOUDCOOKIE_LISTEN", default_value = "127.0.0.1:6767")]
     pub listen: SocketAddr,
 
     /// Directory to store client registry and encrypted cookie blobs

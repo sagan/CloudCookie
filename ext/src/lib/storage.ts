@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill';
-import { DEFAULT_LOCAL_STATE, LocalState, SyncSettings } from './types';
+import { DEFAULT_LOCAL_STATE, type LocalState, type SyncSettings } from './types';
 
 const SYNC_KEYS: (keyof SyncSettings)[] = ['server_url', 'root_key'];
 const LOCAL_KEYS: (keyof LocalState)[] = Object.keys(DEFAULT_LOCAL_STATE) as (keyof LocalState)[];
@@ -37,7 +37,52 @@ export async function getLocalState(): Promise<LocalState> {
     blacklist_domains: Array.isArray(result.blacklist_domains)
       ? result.blacklist_domains
       : DEFAULT_LOCAL_STATE.blacklist_domains,
+    highest_slot_versions:
+      result.highest_slot_versions && typeof result.highest_slot_versions === 'object'
+        ? (result.highest_slot_versions as Record<string, Record<string, number>>)
+        : {},
+    upload_states:
+      result.upload_states && typeof result.upload_states === 'object'
+        ? (result.upload_states as LocalState['upload_states'])
+        : {},
   };
+}
+
+export async function getHighestSlotVersion(clientId: string, slot: number): Promise<number> {
+  const result = await browser.storage.local.get(['highest_slot_versions']);
+  const map = result.highest_slot_versions as Record<string, Record<string, number>> | undefined;
+  const val = map?.[clientId]?.[String(slot)];
+  return typeof val === 'number' && Number.isInteger(val) && val >= 0 ? val : 0;
+}
+
+export async function recordHighestSlotVersion(
+  clientId: string,
+  slot: number,
+  version: number,
+): Promise<void> {
+  if (!Number.isInteger(version) || version < 0) return;
+  const result = await browser.storage.local.get(['highest_slot_versions']);
+  const currentMap =
+    result.highest_slot_versions && typeof result.highest_slot_versions === 'object'
+      ? (result.highest_slot_versions as Record<string, Record<string, number>>)
+      : {};
+  const clientMap =
+    currentMap[clientId] && typeof currentMap[clientId] === 'object'
+      ? currentMap[clientId]
+      : {};
+  const rawPrev = clientMap[String(slot)];
+  const prev = typeof rawPrev === 'number' ? rawPrev : 0;
+  if (version <= prev) return;
+
+  await browser.storage.local.set({
+    highest_slot_versions: {
+      ...currentMap,
+      [clientId]: {
+        ...clientMap,
+        [String(slot)]: version,
+      },
+    },
+  });
 }
 
 export async function saveLocalState(patch: Partial<LocalState>): Promise<void> {

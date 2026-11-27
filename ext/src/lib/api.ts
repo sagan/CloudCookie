@@ -1,12 +1,12 @@
 import {
   decryptSlot,
   deriveKeys,
-  DerivedKeys,
+  type DerivedKeys,
   encryptSlot,
   generateRequestNonce,
   signSyncRequest,
 } from './crypto';
-import { ListSlotEntry, SyncAction } from './types';
+import type { ListSlotEntry, SyncAction } from './types';
 
 export class ApiError extends Error {
   status: number;
@@ -42,18 +42,60 @@ export function normalizeServerUrl(input: string): string {
   return url.origin;
 }
 
+export interface SlotVersionStore {
+  getHighestVersion(clientId: string, slot: number): Promise<number>;
+  setHighestVersion(clientId: string, slot: number, version: number): Promise<void>;
+}
+
+function createDefaultVersionStore(): SlotVersionStore {
+  const memoryFallback = new Map<string, number>();
+
+  const hasBrowserRuntime = (): boolean => {
+    const g = globalThis as { chrome?: { runtime?: { id?: string } }; browser?: { storage?: unknown } };
+    return Boolean(g.chrome?.runtime?.id || g.browser?.storage);
+  };
+
+  return {
+    async getHighestVersion(clientId: string, slot: number): Promise<number> {
+      if (hasBrowserRuntime()) {
+        const { getHighestSlotVersion } = await import('./storage');
+        return getHighestSlotVersion(clientId, slot);
+      }
+      return memoryFallback.get(`${clientId}:${slot}`) ?? 0;
+    },
+    async setHighestVersion(clientId: string, slot: number, version: number): Promise<void> {
+      if (hasBrowserRuntime()) {
+        const { recordHighestSlotVersion } = await import('./storage');
+        await recordHighestSlotVersion(clientId, slot, version);
+        return;
+      }
+      const key = `${clientId}:${slot}`;
+      const prev = memoryFallback.get(key) ?? 0;
+      if (version > prev) {
+        memoryFallback.set(key, version);
+      }
+    },
+  };
+}
+
 export class CloudCookieClient {
   readonly serverUrl: string;
   readonly keys: DerivedKeys;
+  private readonly versionStore: SlotVersionStore;
   private clockOffsetSecs = 0;
 
-  constructor(serverUrl: string, rootKeyHex: string) {
+  constructor(serverUrl: string, rootKeyHex: string, versionStore?: SlotVersionStore) {
     this.serverUrl = normalizeServerUrl(serverUrl);
     this.keys = deriveKeys(rootKeyHex);
+    this.versionStore = versionStore ?? createDefaultVersionStore();
   }
 
   get clientId(): string {
     return this.keys.clientId;
+  }
+
+  async getHighestSeenVersion(slot: number): Promise<number> {
+    return this.versionStore.getHighestVersion(this.clientId, slot);
   }
 
   private nowSecs(): number {
@@ -178,10 +220,26 @@ export class CloudCookieClient {
     if (res.slot !== slot) {
       throw new ApiError(200, 'protocol_mismatch', 'Response slot mismatch');
     }
+    if (!Number.isInteger(res.version) || res.version < 1) {
+      throw new ApiError(200, 'protocol_mismatch', 'Response version is invalid');
+    }
+
+    const highestSeen = await this.versionStore.getHighestVersion(this.clientId, slot);
+    if (res.version < highestSeen) {
+      throw new ApiError(
+        200,
+        'rollback_detected',
+        `Rollback detected for slot ${slot}: server returned version ${res.version}, which is lower than locally recorded version ${highestSeen}.`,
+      );
+    }
 
     // AAD must use locally derived clientId and requested slot
     const plaintext = decryptSlot(this.keys.kEnc, this.clientId, slot, res.version, res.encrypted);
     const data = JSON.parse(plaintext) as T;
+
+    if (res.version > highestSeen) {
+      await this.versionStore.setHighestVersion(this.clientId, slot, res.version);
+    }
 
     return {
       slot,
@@ -196,6 +254,16 @@ export class CloudCookieClient {
     expectedVersion: number,
     payload: unknown,
   ): Promise<{ slot: number; version: number; updated_at: string }> {
+    const highestSeen = await this.versionStore.getHighestVersion(this.clientId, slot);
+    if (expectedVersion < highestSeen) {
+      throw new ApiError(
+        409,
+        'rollback_detected',
+        `Rollback detected for slot ${slot}: expected version ${expectedVersion} is lower than locally recorded version ${highestSeen}.`,
+        { currentVersion: highestSeen },
+      );
+    }
+
     const nextVersion = expectedVersion + 1;
     const plaintext = JSON.stringify(payload);
     const encrypted = encryptSlot(this.keys.kEnc, this.clientId, slot, nextVersion, plaintext);
@@ -229,6 +297,8 @@ export class CloudCookieClient {
     if (res.slot !== slot || res.version !== nextVersion) {
       throw new ApiError(200, 'protocol_mismatch', 'Response slot or version mismatch');
     }
+
+    await this.versionStore.setHighestVersion(this.clientId, slot, res.version);
 
     return {
       slot: res.slot,

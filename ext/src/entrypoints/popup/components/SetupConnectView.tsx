@@ -172,11 +172,10 @@ export const SetupConnectView: React.FC<SetupConnectViewProps> = ({
 
       {(localError || authMessage) && (
         <div
-          className={`p-3 rounded-lg text-xs border ${
-            authStatus === 'pending' || authStatus === 'unauthorized'
-              ? 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200'
-              : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/50 dark:border-red-800 dark:text-red-200'
-          }`}
+          className={`p-3 rounded-lg text-xs border ${authStatus === 'pending' || authStatus === 'unauthorized'
+            ? 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200'
+            : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/50 dark:border-red-800 dark:text-red-200'
+            }`}
         >
           <p className="font-semibold mb-0.5">
             {authStatus === 'pending'
