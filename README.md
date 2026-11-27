@@ -58,7 +58,6 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${DOMAIN:-cloudcookie.example.com}`)"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=6767"
 ```
 
