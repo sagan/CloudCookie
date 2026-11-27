@@ -26,6 +26,14 @@ CloudCookie is an end-to-end encrypted, multi-slot self-hosting browser cookie s
 
 ## Quick Start
 
+### Official Demo Server
+
+An official public-mode instance is available at **<https://cloudcookie.sagan.me/>** (also selectable directly from the browser extension's server dropdown):
+
+- **Public Mode**: Anyone can connect and use it without prior registration or admin approval.
+- **Demo / Evaluation / Test Only**: This server is provided strictly for demonstration, evaluation, and testing purposes. Stored data may be deleted or flushed at any time without prior notice.
+- For production or persistent cookie synchronization, self-host your own `cloudcookie-server` instance.
+
 ### 1. Run the Server
 
 Requires a Rust toolchain (`cargo`).
@@ -79,7 +87,7 @@ npm run build
 To load in Chrome/Chromium:
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. Click **Load unpacked** and select `ext/dist/chrome-mv3`.
-3. Open the CloudCookie popup, set your `server_url` (e.g., `https://cookie.example.com`) and generate or paste your 64-character hex `e2e_key`.
+3. Open the CloudCookie popup, select the official demo server (`https://cloudcookie.sagan.me`) or enter your own `server_url` (e.g., `https://cookie.example.com`), and generate or paste your 64-character hex `e2e_key`.
 
 ---
 

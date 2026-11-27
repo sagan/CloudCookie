@@ -1,4 +1,5 @@
 import browser from 'webextension-polyfill';
+import { normalizeServerUrl } from './api';
 import { DEFAULT_LOCAL_STATE, type LocalState, type SyncSettings } from './types';
 
 const SYNC_KEYS: (keyof SyncSettings)[] = ['server_url', 'root_key'];
@@ -48,27 +49,38 @@ export async function getLocalState(): Promise<LocalState> {
   };
 }
 
-export async function getHighestSlotVersion(clientId: string, slot: number): Promise<number> {
+function makeVersionScopeKey(serverUrl: string, clientId: string): string {
+  return `${normalizeServerUrl(serverUrl)}|${clientId}`;
+}
+
+export async function getHighestSlotVersion(
+  serverUrl: string,
+  clientId: string,
+  slot: number,
+): Promise<number> {
+  const scopeKey = makeVersionScopeKey(serverUrl, clientId);
   const result = await browser.storage.local.get(['highest_slot_versions']);
   const map = result.highest_slot_versions as Record<string, Record<string, number>> | undefined;
-  const val = map?.[clientId]?.[String(slot)];
+  const val = map?.[scopeKey]?.[String(slot)];
   return typeof val === 'number' && Number.isInteger(val) && val >= 0 ? val : 0;
 }
 
 export async function recordHighestSlotVersion(
+  serverUrl: string,
   clientId: string,
   slot: number,
   version: number,
 ): Promise<void> {
   if (!Number.isInteger(version) || version < 0) return;
+  const scopeKey = makeVersionScopeKey(serverUrl, clientId);
   const result = await browser.storage.local.get(['highest_slot_versions']);
   const currentMap =
     result.highest_slot_versions && typeof result.highest_slot_versions === 'object'
       ? (result.highest_slot_versions as Record<string, Record<string, number>>)
       : {};
   const clientMap =
-    currentMap[clientId] && typeof currentMap[clientId] === 'object'
-      ? currentMap[clientId]
+    currentMap[scopeKey] && typeof currentMap[scopeKey] === 'object'
+      ? currentMap[scopeKey]
       : {};
   const rawPrev = clientMap[String(slot)];
   const prev = typeof rawPrev === 'number' ? rawPrev : 0;
@@ -77,7 +89,7 @@ export async function recordHighestSlotVersion(
   await browser.storage.local.set({
     highest_slot_versions: {
       ...currentMap,
-      [clientId]: {
+      [scopeKey]: {
         ...clientMap,
         [String(slot)]: version,
       },

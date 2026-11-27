@@ -43,8 +43,13 @@ export function normalizeServerUrl(input: string): string {
 }
 
 export interface SlotVersionStore {
-  getHighestVersion(clientId: string, slot: number): Promise<number>;
-  setHighestVersion(clientId: string, slot: number, version: number): Promise<void>;
+  getHighestVersion(serverUrl: string, clientId: string, slot: number): Promise<number>;
+  setHighestVersion(
+    serverUrl: string,
+    clientId: string,
+    slot: number,
+    version: number,
+  ): Promise<void>;
 }
 
 function createDefaultVersionStore(): SlotVersionStore {
@@ -56,20 +61,25 @@ function createDefaultVersionStore(): SlotVersionStore {
   };
 
   return {
-    async getHighestVersion(clientId: string, slot: number): Promise<number> {
+    async getHighestVersion(serverUrl: string, clientId: string, slot: number): Promise<number> {
       if (hasBrowserRuntime()) {
         const { getHighestSlotVersion } = await import('./storage');
-        return getHighestSlotVersion(clientId, slot);
+        return getHighestSlotVersion(serverUrl, clientId, slot);
       }
-      return memoryFallback.get(`${clientId}:${slot}`) ?? 0;
+      return memoryFallback.get(`${serverUrl}|${clientId}:${slot}`) ?? 0;
     },
-    async setHighestVersion(clientId: string, slot: number, version: number): Promise<void> {
+    async setHighestVersion(
+      serverUrl: string,
+      clientId: string,
+      slot: number,
+      version: number,
+    ): Promise<void> {
       if (hasBrowserRuntime()) {
         const { recordHighestSlotVersion } = await import('./storage');
-        await recordHighestSlotVersion(clientId, slot, version);
+        await recordHighestSlotVersion(serverUrl, clientId, slot, version);
         return;
       }
-      const key = `${clientId}:${slot}`;
+      const key = `${serverUrl}|${clientId}:${slot}`;
       const prev = memoryFallback.get(key) ?? 0;
       if (version > prev) {
         memoryFallback.set(key, version);
@@ -95,7 +105,7 @@ export class CloudCookieClient {
   }
 
   async getHighestSeenVersion(slot: number): Promise<number> {
-    return this.versionStore.getHighestVersion(this.clientId, slot);
+    return this.versionStore.getHighestVersion(this.serverUrl, this.clientId, slot);
   }
 
   private nowSecs(): number {
@@ -224,7 +234,11 @@ export class CloudCookieClient {
       throw new ApiError(200, 'protocol_mismatch', 'Response version is invalid');
     }
 
-    const highestSeen = await this.versionStore.getHighestVersion(this.clientId, slot);
+    const highestSeen = await this.versionStore.getHighestVersion(
+      this.serverUrl,
+      this.clientId,
+      slot,
+    );
     if (res.version < highestSeen) {
       throw new ApiError(
         200,
@@ -238,7 +252,7 @@ export class CloudCookieClient {
     const data = JSON.parse(plaintext) as T;
 
     if (res.version > highestSeen) {
-      await this.versionStore.setHighestVersion(this.clientId, slot, res.version);
+      await this.versionStore.setHighestVersion(this.serverUrl, this.clientId, slot, res.version);
     }
 
     return {
@@ -254,7 +268,11 @@ export class CloudCookieClient {
     expectedVersion: number,
     payload: unknown,
   ): Promise<{ slot: number; version: number; updated_at: string }> {
-    const highestSeen = await this.versionStore.getHighestVersion(this.clientId, slot);
+    const highestSeen = await this.versionStore.getHighestVersion(
+      this.serverUrl,
+      this.clientId,
+      slot,
+    );
     if (expectedVersion < highestSeen) {
       throw new ApiError(
         409,
@@ -298,7 +316,7 @@ export class CloudCookieClient {
       throw new ApiError(200, 'protocol_mismatch', 'Response slot or version mismatch');
     }
 
-    await this.versionStore.setHighestVersion(this.clientId, slot, res.version);
+    await this.versionStore.setHighestVersion(this.serverUrl, this.clientId, slot, res.version);
 
     return {
       slot: res.slot,

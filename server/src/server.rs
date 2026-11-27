@@ -224,7 +224,8 @@ async fn handle_root_help(State(state): State<AppState>) -> impl IntoResponse {
          Sync Request (POST /):\n\
            JSON body with client_id (64-char hex Ed25519 pubkey), action, slot,\n\
            timestamp, nonce (32-char hex), signature, and for update:\n\
-           expected_version and encrypted payload.\n",
+           expected_version and encrypted payload.\n\n\
+           For more info, see https://github.com/sagan/CloudCookie .\n",
         version = env!("CARGO_PKG_VERSION"),
         mode = mode,
     );

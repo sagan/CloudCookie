@@ -9,11 +9,16 @@ const TEST_ROOT_KEY_B = 'ff0102030405060708090a0b0c0d0e0f101112131415161718191a1
 function createMemoryVersionStore(): SlotVersionStore {
   const map = new Map<string, number>();
   return {
-    async getHighestVersion(clientId: string, slot: number): Promise<number> {
-      return map.get(`${clientId}:${slot}`) ?? 0;
+    async getHighestVersion(serverUrl: string, clientId: string, slot: number): Promise<number> {
+      return map.get(`${serverUrl}|${clientId}:${slot}`) ?? 0;
     },
-    async setHighestVersion(clientId: string, slot: number, version: number): Promise<void> {
-      const key = `${clientId}:${slot}`;
+    async setHighestVersion(
+      serverUrl: string,
+      clientId: string,
+      slot: number,
+      version: number,
+    ): Promise<void> {
+      const key = `${serverUrl}|${clientId}:${slot}`;
       const prev = map.get(key) ?? 0;
       if (version > prev) {
         map.set(key, version);
@@ -152,6 +157,49 @@ describe('CloudCookieClient rollback protection', () => {
           () => client.updateSlot(1, 0, { hello: 'stale' }),
           (err: unknown) => err instanceof ApiError && err.code === 'rollback_detected',
         );
+      },
+    );
+  });
+
+  it('tracks highest seen version per serverUrl independently for the same client_id', async () => {
+    const store = createMemoryVersionStore();
+    const clientServerA = new CloudCookieClient('https://server-a.example.com', TEST_ROOT_KEY_A, store);
+    const clientServerB = new CloudCookieClient('https://server-b.example.com', TEST_ROOT_KEY_A, store);
+    const keys = deriveKeys(TEST_ROOT_KEY_A);
+
+    await withMockFetch(
+      (req) => ({
+        ok: true,
+        action: 'get',
+        client_id: req.client_id,
+        slot: 0,
+        version: 4,
+        updated_at: '2026-01-01T00:00:00Z',
+        encrypted: encryptSlot(keys.kEnc, keys.clientId, 0, 4, JSON.stringify({ schema_version: 1, updated_at: 4, slots: {} })),
+      }),
+      async () => {
+        const resA = await clientServerA.getSlot(0);
+        assert.equal(resA.version, 4);
+        assert.equal(await clientServerA.getHighestSeenVersion(0), 4);
+        assert.equal(await clientServerB.getHighestSeenVersion(0), 0);
+      },
+    );
+
+    await withMockFetch(
+      (req) => ({
+        ok: true,
+        action: 'get',
+        client_id: req.client_id,
+        slot: 0,
+        version: 1,
+        updated_at: '2026-01-01T00:00:00Z',
+        encrypted: encryptSlot(keys.kEnc, keys.clientId, 0, 1, JSON.stringify({ schema_version: 1, updated_at: 1, slots: {} })),
+      }),
+      async () => {
+        const resB = await clientServerB.getSlot(0);
+        assert.equal(resB.version, 1);
+        assert.equal(await clientServerB.getHighestSeenVersion(0), 1);
+        assert.equal(await clientServerA.getHighestSeenVersion(0), 4);
       },
     );
   });

@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { deriveKeys, generateRootKey, isValidRootKey, normalizeRootKey } from '../../../lib/crypto';
 import { normalizeServerUrl } from '../../../lib/api';
+import { findPresetServer, PRESET_SERVERS } from '../../../lib/servers';
+
+const CUSTOM_SERVER_OPTION = 'custom';
 
 interface SetupConnectViewProps {
   initialServerUrl: string;
@@ -19,11 +22,36 @@ export const SetupConnectView: React.FC<SetupConnectViewProps> = ({
   onConnect,
   onCancel,
 }) => {
-  const [serverUrl, setServerUrl] = useState(initialServerUrl);
+  const initialPreset = initialServerUrl
+    ? findPresetServer(initialServerUrl)
+    : PRESET_SERVERS[0];
+  const [selectedServerOption, setSelectedServerOption] = useState<string>(
+    initialPreset ? initialPreset.id : CUSTOM_SERVER_OPTION,
+  );
+  const [serverUrl, setServerUrl] = useState(
+    initialServerUrl ? (initialPreset ? initialPreset.url : initialServerUrl) : PRESET_SERVERS[0]?.url ?? '',
+  );
   const [rootKey, setRootKey] = useState(initialRootKey);
   const [showKey, setShowKey] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  const activePreset = useMemo(() => findPresetServer(serverUrl), [serverUrl]);
+
+  const handleServerOptionChange = (option: string) => {
+    setSelectedServerOption(option);
+    setLocalError(null);
+    if (option === CUSTOM_SERVER_OPTION) {
+      if (findPresetServer(serverUrl)) {
+        setServerUrl('');
+      }
+      return;
+    }
+    const preset = PRESET_SERVERS.find((p) => p.id === option);
+    if (preset) {
+      setServerUrl(preset.url);
+    }
+  };
 
   const clientId = useMemo(() => {
     if (!isValidRootKey(rootKey)) return null;
@@ -88,17 +116,58 @@ export const SetupConnectView: React.FC<SetupConnectViewProps> = ({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 mb-1">
-          Server URL
+      <div className="space-y-2">
+        <label
+          htmlFor="server-preset-select"
+          className="block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300"
+        >
+          Server
         </label>
-        <input
-          type="text"
-          value={serverUrl}
-          onChange={(e) => setServerUrl(e.target.value)}
-          placeholder="https://cookie.example.com"
+        <select
+          id="server-preset-select"
+          value={selectedServerOption}
+          onChange={(e) => handleServerOptionChange(e.target.value)}
           className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+        >
+          {PRESET_SERVERS.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.name} — {preset.url}
+            </option>
+          ))}
+          <option value={CUSTOM_SERVER_OPTION}>Custom Server URL...</option>
+        </select>
+
+        {selectedServerOption === CUSTOM_SERVER_OPTION && (
+          <input
+            type="text"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="https://cookie.example.com"
+            aria-label="Custom Server URL"
+            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        )}
+
+        {activePreset?.notice && (
+          <div className="p-2.5 rounded-lg text-xs border bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200">
+            {activePreset.noticeTitle && (
+              <p className="font-semibold mb-0.5">{activePreset.noticeTitle}</p>
+            )}
+            <p>{activePreset.notice}</p>
+          </div>
+        )}
+
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+          Want to self-host your own server? See{' '}
+          <a
+            href="https://github.com/sagan/CloudCookie"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+          >
+            github.com/sagan/CloudCookie
+          </a>
+        </p>
       </div>
 
       <div>

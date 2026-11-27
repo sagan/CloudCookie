@@ -448,6 +448,18 @@ const App: React.FC = () => {
           </>
         )}
       </main>
+
+      <footer className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
+        <span>Self-host your own server:</span>
+        <a
+          href="https://github.com/sagan/CloudCookie"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+        >
+          github.com/sagan/CloudCookie
+        </a>
+      </footer>
     </div>
   );
 };

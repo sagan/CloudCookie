@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { findPresetServer } from '../../../lib/servers';
 import type { LocalState, SyncSettings } from '../../../lib/types';
 
 interface SettingsViewProps {
@@ -34,6 +35,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [confirmSoftDelete, setConfirmSoftDelete] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [dangerBusy, setDangerBusy] = useState(false);
+  const activePreset = findPresetServer(syncSettings.server_url);
 
   const copy = async (label: string, val: string) => {
     await navigator.clipboard.writeText(val);
@@ -119,6 +121,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {copied === 'url' ? '✓ Copied' : 'Copy URL'}
           </button>
         </div>
+        {activePreset?.notice && (
+          <div className="p-2 rounded bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200">
+            <span className="font-semibold">{activePreset.name}:</span> {activePreset.notice}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-slate-600 dark:text-slate-300 truncate">
             Root Key: <span className="font-mono">••••••••{syncSettings.root_key.slice(-8)}</span>
