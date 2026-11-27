@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build-server:
@@ -99,3 +100,72 @@ jobs:
             artifacts/cloudcookie-server-aarch64-unknown-linux-musl
             artifacts/cloudcookie-server-x86_64-unknown-linux-musl
             artifacts/cloudcookie-ext.zip
+
+  build-docker:
+    name: Build and push Docker image
+    needs:
+      - build-server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download x86_64 server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcookie-server-x86_64-unknown-linux-musl
+          path: dist/linux/amd64
+
+      - name: Download aarch64 server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcookie-server-aarch64-unknown-linux-musl
+          path: dist/linux/arm64
+
+      - name: Prepare binaries and Dockerfile
+        run: |
+          mv dist/linux/amd64/cloudcookie-server-x86_64-unknown-linux-musl dist/linux/amd64/cloudcookie-server
+          mv dist/linux/arm64/cloudcookie-server-aarch64-unknown-linux-musl dist/linux/arm64/cloudcookie-server
+          chmod +x dist/linux/amd64/cloudcookie-server dist/linux/arm64/cloudcookie-server
+          cat <<'EOF' > Dockerfile.release
+          FROM alpine:3.24
+          ARG TARGETARCH
+          RUN apk add --no-cache ca-certificates \
+              && mkdir -p /var/lib/cloudcookie
+          COPY dist/linux/${TARGETARCH}/cloudcookie-server /usr/local/bin/cloudcookie-server
+          ENV CLOUDCOOKIE_LISTEN=0.0.0.0:6767 \
+              CLOUDCOOKIE_DATA_DIR=/var/lib/cloudcookie
+          EXPOSE 6767
+          VOLUME ["/var/lib/cloudcookie"]
+          ENTRYPOINT ["/usr/local/bin/cloudcookie-server"]
+          EOF
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

@@ -34,7 +34,66 @@ An official public-mode instance is available at **<https://cloudcookie.sagan.me
 - **Demo / Evaluation / Test Only**: This server is provided strictly for demonstration, evaluation, and testing purposes. Stored data may be deleted or flushed at any time without prior notice.
 - For production or persistent cookie synchronization, self-host your own `cloudcookie-server` instance.
 
-### 1. Run the Server
+### Run CloudCookie server with Docker Compose (Traefik)
+
+Prebuilt multi-arch (`linux/amd64`, `linux/arm64`) images are published to GitHub Container Registry (`ghcr.io/sagan/cloudcookie`).
+
+Sample `compose.yaml` with [Traefik](https://traefik.io/) reverse proxy labels:
+
+```yaml
+services:
+  cloudcookie:
+    image: ghcr.io/sagan/cloudcookie:latest
+    container_name: cloudcookie
+    restart: unless-stopped
+    environment:
+      CLOUDCOOKIE_ADMIN_TOKEN: "${CLOUDCOOKIE_ADMIN_TOKEN:-}"
+      # Optional: enable approval mode or public mode (default is private mode)
+      # CLOUDCOOKIE_AUTO_REGISTER_PENDING: "true"
+      # CLOUDCOOKIE_PUBLIC_MODE: "true"
+    volumes:
+      - ./data:/var/lib/cloudcookie
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${DOMAIN:-cloudcookie.example.com}`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=6767"
+```
+
+Set `CLOUDCOOKIE_ADMIN_TOKEN` env to the admin token, if not set a ephemeral random one is generated on every startup and printed to the stderr.
+
+Open `https://<domain>/admin.html` and auth with the admin token to open Admin UI.
+
+---
+
+## Server Configuration
+
+All options can be passed as CLI flags or environment variables:
+
+| CLI Flag                     | Environment Variable                   | Default                | Description                                                         |
+| ---------------------------- | -------------------------------------- | ---------------------- | ------------------------------------------------------------------- |
+| `--listen`                   | `CLOUDCOOKIE_LISTEN`                   | `127.0.0.1:6767`       | Address and port to listen on. In docker image it's `0.0.0.0:6767`  |
+| `--data-dir`                 | `CLOUDCOOKIE_DATA_DIR`                 | `/var/lib/cloudcookie` | Directory for client registry and encrypted blobs                   |
+| `--admin-token`              | `CLOUDCOOKIE_ADMIN_TOKEN`              | _(random)_             | Bearer token for `/admin/*` endpoints                               |
+| `--private-mode`             | `CLOUDCOOKIE_PRIVATE_MODE`             | `false`                | Private mode (default when neither public nor auto-register is set) |
+| `--auto-register-pending`    | `CLOUDCOOKIE_AUTO_REGISTER_PENDING`    | `false`                | Record unknown `client_id`s as pending admin approval               |
+| `--public-mode`              | `CLOUDCOOKIE_PUBLIC_MODE`              | `false`                | Automatically approve new `client_id`s                              |
+| `--max-pending`              | `CLOUDCOOKIE_MAX_PENDING`              | `1000`                 | Maximum pending client registrations                                |
+| `--max-slot`                 | `CLOUDCOOKIE_MAX_SLOT`                 | `1023`                 | Maximum 0-based slot index allowed per client                       |
+| `--max-slots-per-client`     | `CLOUDCOOKIE_MAX_SLOTS_PER_CLIENT`     | _(unlimited)_          | Maximum number of stored slots per client                           |
+| `--max-client-storage-bytes` | `CLOUDCOOKIE_MAX_CLIENT_STORAGE_BYTES` | _(unlimited)_          | Maximum total encrypted storage bytes per client                    |
+| `--auth-window-secs`         | `CLOUDCOOKIE_AUTH_WINDOW_SECS`         | `300`                  | Allowed clock skew / request auth window in seconds                 |
+| `--enable-nonce-cache`       | `CLOUDCOOKIE_ENABLE_NONCE_CACHE`       | `false`                | Enable in-memory `(client_id, nonce)` replay cache                  |
+| `--max-body-bytes`           | `CLOUDCOOKIE_MAX_BODY_BYTES`           | `16777216`             | Maximum HTTP request body size in bytes (16 MiB)                    |
+| `--rate-limit-per-min`       | `CLOUDCOOKIE_RATE_LIMIT_PER_MIN`       | `120`                  | Maximum requests per minute per IP (`0` disables)                   |
+
+---
+
+## Development & Testing
+
+### Build & Run CloudCookie server
 
 Requires a Rust toolchain (`cargo`).
 
@@ -65,13 +124,14 @@ Data is stored in `/var/lib/cloudcookie` by default, which can be changed by `--
 If `CLOUDCOOKIE_ADMIN_TOKEN` / `--admin-token` is omitted, an ephemeral random token is generated and logged on startup.
 
 Once running:
+
 - **Sync endpoint**: `POST /`
 - **Health check**: `GET /health`
 - **Admin Web UI**: `GET /admin.html` (authenticate with your admin bearer token)
 
 > **Production Note**: Deploy behind a TLS-terminating reverse proxy (HTTPS) so metadata and signed requests within `auth_window_secs` are protected in transit.
 
-### 2. Build & Load the Browser Extension
+### Build & Load the Browser Extension
 
 Requires Node.js and npm.
 
@@ -85,36 +145,10 @@ npm run build
 - For development with hot reload: `npm run dev` (or `npm run dev:firefox`)
 
 To load in Chrome/Chromium:
+
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. Click **Load unpacked** and select `ext/dist/chrome-mv3`.
 3. Open the CloudCookie popup, select the official demo server (`https://cloudcookie.sagan.me`) or enter your own `server_url` (e.g., `https://cookie.example.com`), and generate or paste your 64-character hex `e2e_key`.
-
----
-
-## Server Configuration
-
-All options can be passed as CLI flags or environment variables:
-
-| CLI Flag | Environment Variable | Default | Description |
-| --- | --- | --- | --- |
-| `--listen` | `CLOUDCOOKIE_LISTEN` | `0.0.0.0:6767` | Address and port to listen on |
-| `--data-dir` | `CLOUDCOOKIE_DATA_DIR` | `/var/lib/cloudcookie` | Directory for client registry and encrypted blobs |
-| `--admin-token` | `CLOUDCOOKIE_ADMIN_TOKEN` | *(random)* | Bearer token for `/admin/*` endpoints |
-| `--private-mode` | `CLOUDCOOKIE_PRIVATE_MODE` | `false` | Private mode (default when neither public nor auto-register is set) |
-| `--auto-register-pending` | `CLOUDCOOKIE_AUTO_REGISTER_PENDING` | `false` | Record unknown `client_id`s as pending admin approval |
-| `--public-mode` | `CLOUDCOOKIE_PUBLIC_MODE` | `false` | Automatically approve new `client_id`s |
-| `--max-pending` | `CLOUDCOOKIE_MAX_PENDING` | `1000` | Maximum pending client registrations |
-| `--max-slot` | `CLOUDCOOKIE_MAX_SLOT` | `1023` | Maximum 0-based slot index allowed per client |
-| `--max-slots-per-client` | `CLOUDCOOKIE_MAX_SLOTS_PER_CLIENT` | *(unlimited)* | Maximum number of stored slots per client |
-| `--max-client-storage-bytes` | `CLOUDCOOKIE_MAX_CLIENT_STORAGE_BYTES` | *(unlimited)* | Maximum total encrypted storage bytes per client |
-| `--auth-window-secs` | `CLOUDCOOKIE_AUTH_WINDOW_SECS` | `300` | Allowed clock skew / request auth window in seconds |
-| `--enable-nonce-cache` | `CLOUDCOOKIE_ENABLE_NONCE_CACHE` | `false` | Enable in-memory `(client_id, nonce)` replay cache |
-| `--max-body-bytes` | `CLOUDCOOKIE_MAX_BODY_BYTES` | `16777216` | Maximum HTTP request body size in bytes (16 MiB) |
-| `--rate-limit-per-min` | `CLOUDCOOKIE_RATE_LIMIT_PER_MIN` | `120` | Maximum requests per minute per IP (`0` disables) |
-
----
-
-## Development & Testing
 
 ### Server Tests
 
