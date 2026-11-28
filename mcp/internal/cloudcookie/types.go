@@ -78,6 +78,34 @@ type SerializedCookie struct {
 	PartitionKey   *PartitionKey `json:"partitionKey,omitempty"`
 }
 
+// UserAgentBrand represents a brand/version pair from NavigatorUAData.
+type UserAgentBrand struct {
+	Brand   string `json:"brand"`
+	Version string `json:"version"`
+}
+
+// UserAgentDataMeta represents Chromium UA Client Hints collected by the extension.
+type UserAgentDataMeta struct {
+	Brands          []UserAgentBrand `json:"brands,omitempty"`
+	Mobile          *bool            `json:"mobile,omitempty"`
+	Platform        string           `json:"platform,omitempty"`
+	PlatformVersion string           `json:"platform_version,omitempty"`
+	Architecture    string           `json:"architecture,omitempty"`
+	Bitness         string           `json:"bitness,omitempty"`
+	FullVersionList []UserAgentBrand `json:"full_version_list,omitempty"`
+}
+
+// BrowserMeta holds the browser User-Agent and environment metadata uploaded with a slot.
+type BrowserMeta struct {
+	UserAgent        string             `json:"user_agent,omitempty"`
+	UserAgentData    *UserAgentDataMeta `json:"user_agent_data,omitempty"`
+	Platform         string             `json:"platform,omitempty"`
+	Language         string             `json:"language,omitempty"`
+	Languages        []string           `json:"languages,omitempty"`
+	Timezone         string             `json:"timezone,omitempty"`
+	ExtensionVersion string             `json:"extension_version,omitempty"`
+}
+
 // SlotDataPayload is the decrypted JSON payload of Slot 1+ (Cookie Data Slot).
 type SlotDataPayload struct {
 	SchemaVersion int                           `json:"schema_version"`
@@ -86,6 +114,7 @@ type SlotDataPayload struct {
 	UpdatedAt     int64                         `json:"updated_at"`
 	CookieCount   int                           `json:"cookie_count"`
 	DomainCount   int                           `json:"domain_count"`
+	Meta          *BrowserMeta                  `json:"meta,omitempty"`
 	Cookies       map[string][]SerializedCookie `json:"cookies"`
 }
 

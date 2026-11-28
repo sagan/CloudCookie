@@ -17,8 +17,8 @@ import (
 const serverInstructions = `CloudCookie MCP Server provides on-demand read-only access to the user's end-to-end encrypted browser cookies and bookmarks stored in CloudCookie.
 Typical workflow:
 1. Call get_cookies with either "url" (recommended for RFC 6265 domain/path/secure matching) or "domain".
-2. Use format="header" (default) for curl (-H "Cookie: ...") or Firecrawl (headers.Cookie), format="playwright" for Playwright/CDP, or format="netscape" for curl -b.
-3. Optionally call list_domains to discover which websites have saved cookies, or list_slots if the user has multiple browser profiles.
+2. Use format="header" (default) for curl (-H "Cookie: ...") or Firecrawl (headers.Cookie), format="playwright" for Playwright/CDP, or format="netscape" for curl -b. If the slot includes browser meta info (e.g. meta.user_agent), pass it as the User-Agent header when websites bind cookies to the browser User-Agent.
+3. Optionally call list_domains to discover which websites have saved cookies, list_slots if the user has multiple browser profiles, or get_slot_meta to inspect the browser User-Agent and environment metadata of a slot.
 4. Call get_bookmarks to search or retrieve the user's synced browser bookmarks.`
 
 // CookieProvider abstracts the CloudCookie client for testability.
@@ -177,6 +177,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) JSONRP
 		return okResp(req.ID, s.callListDomains(ctx, params.Arguments))
 	case "get_cookies":
 		return okResp(req.ID, s.callGetCookies(ctx, params.Arguments))
+	case "get_slot_meta":
+		return okResp(req.ID, s.callGetSlotMeta(ctx, params.Arguments))
 	case "get_bookmarks":
 		return okResp(req.ID, s.callGetBookmarks(ctx, params.Arguments))
 	default:
@@ -247,6 +249,9 @@ func (s *Server) callListDomains(ctx context.Context, rawArgs json.RawMessage) C
 		"domain_count":  len(domains),
 		"domains":       domains,
 	}
+	if data.Meta != nil {
+		payload["meta"] = data.Meta
+	}
 	return toolJSON(payload)
 }
 
@@ -313,6 +318,9 @@ func (s *Server) callGetCookies(ctx context.Context, rawArgs json.RawMessage) Ca
 		"format":        format,
 		"matched_count": len(matched.Cookies),
 	}
+	if data.Meta != nil {
+		out["meta"] = data.Meta
+	}
 
 	switch format {
 	case "header":
@@ -331,6 +339,38 @@ func (s *Server) callGetCookies(ctx context.Context, rawArgs json.RawMessage) Ca
 	}
 
 	return toolJSON(out)
+}
+
+type getSlotMetaArgs struct {
+	Slot    *uint32 `json:"slot"`
+	Refresh bool    `json:"refresh"`
+}
+
+func (s *Server) callGetSlotMeta(ctx context.Context, rawArgs json.RawMessage) CallToolResult {
+	var args getSlotMetaArgs
+	if len(rawArgs) > 0 {
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return toolError("invalid arguments: " + err.Error())
+		}
+	}
+
+	slotID, err := s.provider.ResolveSlot(ctx, args.Slot, args.Refresh)
+	if err != nil {
+		return toolError(err.Error())
+	}
+
+	data, version, err := s.provider.GetSlotData(ctx, slotID, args.Refresh)
+	if err != nil {
+		return toolError(fmt.Sprintf("failed to fetch slot %d: %v", slotID, err))
+	}
+
+	return toolJSON(map[string]any{
+		"slot":          slotID,
+		"instance_name": data.InstanceName,
+		"version":       version,
+		"updated_at":    data.UpdatedAt,
+		"meta":          data.Meta,
+	})
 }
 
 type getBookmarksArgs struct {
@@ -435,10 +475,38 @@ func (s *Server) handleResourcesRead(ctx context.Context, req JSONRPCRequest) JS
 		if domains == nil {
 			domains = []cookies.DomainCount{}
 		}
-		b, _ := json.MarshalIndent(map[string]any{
+		resPayload := map[string]any{
 			"slot":          slotID,
 			"instance_name": data.InstanceName,
 			"domains":       domains,
+		}
+		if data.Meta != nil {
+			resPayload["meta"] = data.Meta
+		}
+		b, _ := json.MarshalIndent(resPayload, "", "  ")
+		return okResp(req.ID, ReadResourceResult{
+			Contents: []ResourceContent{{
+				URI:      params.URI,
+				MimeType: "application/json",
+				Text:     string(b),
+			}},
+		})
+
+	case "cloudcookie://meta":
+		slotID, err := s.provider.ResolveSlot(ctx, nil, false)
+		if err != nil {
+			return errorResp(req.ID, ErrCodeInternalError, err.Error())
+		}
+		data, version, err := s.provider.GetSlotData(ctx, slotID, false)
+		if err != nil {
+			return errorResp(req.ID, ErrCodeInternalError, err.Error())
+		}
+		b, _ := json.MarshalIndent(map[string]any{
+			"slot":          slotID,
+			"instance_name": data.InstanceName,
+			"version":       version,
+			"updated_at":    data.UpdatedAt,
+			"meta":          data.Meta,
 		}, "", "  ")
 		return okResp(req.ID, ReadResourceResult{
 			Contents: []ResourceContent{{
@@ -563,6 +631,26 @@ func toolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:        "get_slot_meta",
+			Description: "Retrieve browser metadata (User-Agent, User-Agent Client Hints, platform, language, timezone, extension version) uploaded with a CloudCookie slot.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"slot": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"description": "Optional slot ID (>= 1). Uses the configured default or most recently updated slot if omitted.",
+					},
+					"refresh": map[string]any{
+						"type":        "boolean",
+						"default":     false,
+						"description": "Bypass local cache and fetch fresh data from the CloudCookie server.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        "get_bookmarks",
 			Description: "Retrieve or search decrypted browser bookmarks stored in CloudCookie's dedicated bookmarks slot.",
 			InputSchema: map[string]any{
@@ -613,6 +701,12 @@ func resourceDefinitions() []ResourceDefinition {
 			URI:         "cloudcookie://domains",
 			Name:        "CloudCookie Domains",
 			Description: "List of domains with stored cookies in the default CloudCookie slot.",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "cloudcookie://meta",
+			Name:        "CloudCookie Slot Meta",
+			Description: "Browser User-Agent and environment metadata for the default CloudCookie slot.",
 			MimeType:    "application/json",
 		},
 		{

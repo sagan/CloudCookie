@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { ApiError, CloudCookieClient, normalizeServerUrl } from './api';
 import { isValidRootKey } from './crypto';
 import {
@@ -9,6 +11,7 @@ import {
 import type {
   BookmarkSlotPayload,
   BookmarksUploadResult,
+  BrowserMeta,
   DeleteAllResult,
   LocalState,
   SerializedBookmarkNode,
@@ -19,6 +22,11 @@ import type {
   SyncSettings,
   UploadResult,
 } from './types';
+
+function hashPayloadWithMeta(cookieHash: string, meta: BrowserMeta): string {
+  const input = `${cookieHash}\n${JSON.stringify(meta)}`;
+  return bytesToHex(sha256(new TextEncoder().encode(input)));
+}
 
 export function makeUploadTargetKey(serverUrl: string, clientId: string, slot: number): string {
   return `${normalizeServerUrl(serverUrl)}|${clientId}|${slot}`;
@@ -36,6 +44,7 @@ export interface SyncDependencies {
     domainCount: number;
   }>;
   hashCookieMap(cookies: Record<string, SerializedCookie[]>): string;
+  collectBrowserMeta?: () => Promise<BrowserMeta | undefined>;
   collectLocalBookmarks?: () => Promise<{
     roots: SerializedBookmarkNode[];
     bookmarkCount: number;
@@ -139,7 +148,9 @@ export function createSyncCoordinator(deps: SyncDependencies): SyncCoordinator {
         const { cookies, cookieCount, domainCount } = await deps.collectLocalCookies(
           local.blacklist_domains,
         );
-        const hash = deps.hashCookieMap(cookies);
+        const meta = deps.collectBrowserMeta ? await deps.collectBrowserMeta() : undefined;
+        const cookieHash = deps.hashCookieMap(cookies);
+        const hash = meta ? hashPayloadWithMeta(cookieHash, meta) : cookieHash;
 
         if (await isSuperseded(epochAtStart, targetKey)) {
           return { ok: false, error: 'Upload superseded by slot or connection change' };
@@ -186,6 +197,7 @@ export function createSyncCoordinator(deps: SyncDependencies): SyncCoordinator {
           updated_at: Date.now(),
           cookie_count: cookieCount,
           domain_count: domainCount,
+          ...(meta ? { meta } : {}),
           cookies,
         };
 

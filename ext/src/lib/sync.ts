@@ -2,6 +2,7 @@ import browser from 'webextension-polyfill';
 import { CloudCookieClient } from './api';
 import { collectLocalBookmarks, hashBookmarks } from './bookmarks';
 import { collectLocalCookies, hashCookieMap } from './cookies';
+import { collectBrowserMeta } from './meta';
 import {
   clearAllExtensionData,
   clearSlotBinding,
@@ -37,6 +38,7 @@ const coordinator = createSyncCoordinator({
   clearAllExtensionData,
   collectLocalCookies,
   hashCookieMap,
+  collectBrowserMeta,
   collectLocalBookmarks,
   hashBookmarks,
   createClient: (serverUrl, rootKey) => new CloudCookieClient(serverUrl, rootKey),

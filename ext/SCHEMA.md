@@ -70,6 +70,21 @@ Encrypted with XAES-256-GCM (`AAD = cloudcookie-v1:<client_id>:<slot>:<version>`
   "updated_at": 1795692095000,
   "cookie_count": 42,
   "domain_count": 5,
+  "meta": {
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "user_agent_data": {
+      "brands": [
+        { "brand": "Google Chrome", "version": "131" }
+      ],
+      "mobile": false,
+      "platform": "macOS"
+    },
+    "platform": "MacIntel",
+    "language": "en-US",
+    "languages": ["en-US", "en"],
+    "timezone": "America/Los_Angeles",
+    "extension_version": "1.1.0"
+  },
   "cookies": {
     "github.com": [
       {

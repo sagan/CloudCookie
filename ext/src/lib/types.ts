@@ -103,6 +103,31 @@ export interface SerializedCookie {
   } | null;
 }
 
+export interface UserAgentBrand {
+  brand: string;
+  version: string;
+}
+
+export interface UserAgentDataMeta {
+  brands?: UserAgentBrand[];
+  mobile?: boolean;
+  platform?: string;
+  platform_version?: string;
+  architecture?: string;
+  bitness?: string;
+  full_version_list?: UserAgentBrand[];
+}
+
+export interface BrowserMeta {
+  user_agent?: string;
+  user_agent_data?: UserAgentDataMeta;
+  platform?: string;
+  language?: string;
+  languages?: string[];
+  timezone?: string;
+  extension_version?: string;
+}
+
 export interface SlotDataPayload {
   schema_version: 1;
   slot: number;
@@ -110,6 +135,7 @@ export interface SlotDataPayload {
   updated_at: number;
   cookie_count: number;
   domain_count: number;
+  meta?: BrowserMeta;
   cookies: Record<string, SerializedCookie[]>;
 }
 

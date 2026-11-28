@@ -58,6 +58,12 @@ func TestClientSyncCacheAndClockOffset(t *testing.T) {
 		InstanceName:  "Dev Chrome",
 		CookieCount:   1,
 		DomainCount:   1,
+		Meta: &BrowserMeta{
+			UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0",
+			Platform:  "MacIntel",
+			Language:  "en-US",
+			Timezone:  "America/Los_Angeles",
+		},
 		Cookies: map[string][]SerializedCookie{
 			"example.org": {{Name: "tok", Value: "v1", Domain: "example.org", Path: "/", HostOnly: true}},
 		},
@@ -168,6 +174,9 @@ func TestClientSyncCacheAndClockOffset(t *testing.T) {
 	}
 	if ver != 2 || data.InstanceName != "Dev Chrome" {
 		t.Fatalf("unexpected slot data: ver=%d, data=%+v", ver, data)
+	}
+	if data.Meta == nil || data.Meta.UserAgent != "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0" {
+		t.Fatalf("expected decrypted browser meta in slot data, got: %+v", data.Meta)
 	}
 
 	// Second call should hit cache without hitting server

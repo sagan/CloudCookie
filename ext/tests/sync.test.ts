@@ -289,4 +289,95 @@ describe('syncCoordinator race & state isolation', () => {
     const key = makeUploadTargetKey('https://server-a.example.com', keysA.clientId, 1);
     assert.equal(h.getLocalState().upload_states[key], undefined);
   });
+
+  it('uploads browser meta info in slot payload and re-uploads when meta changes', async () => {
+    const h = createTestHarness();
+    let currentUA = 'Mozilla/5.0 Chrome/130.0.0.0';
+
+    const metaCoordinator = createSyncCoordinator({
+      async getSyncSettings() {
+        return h.getSyncSettings();
+      },
+      async getLocalState() {
+        return h.getLocalState();
+      },
+      async saveLocalState(patch) {
+        h.setLocalState(patch);
+      },
+      async clearSlotBinding() {},
+      async clearAllExtensionData() {},
+      async collectLocalCookies() {
+        return { cookies: SAMPLE_COOKIES, cookieCount: 1, domainCount: 1 };
+      },
+      hashCookieMap(cookies) {
+        return JSON.stringify(cookies);
+      },
+      async collectBrowserMeta() {
+        return {
+          user_agent: currentUA,
+          platform: 'MacIntel',
+          language: 'en-US',
+        };
+      },
+      createClient(serverUrl, rootKey) {
+        // Reuse the same mock server state via a fresh coordinator-compatible client
+        const keys = deriveKeys(rootKey);
+        const clientId = keys.clientId;
+        const mapKey = `${serverUrl}|${clientId}`;
+        let clientMap = h.remoteSlots.get(mapKey);
+        if (!clientMap) {
+          clientMap = new Map();
+          h.remoteSlots.set(mapKey, clientMap);
+        }
+        return {
+          serverUrl,
+          clientId,
+          async getHighestSeenVersion() {
+            return 0;
+          },
+          async listSlots() {
+            return Array.from(clientMap!.entries()).map(([slot, rec]) => ({
+              slot,
+              version: rec.version,
+              updated_at: '2026-01-01T00:00:00Z',
+              size_bytes: 100,
+            }));
+          },
+          async getSlot() {
+            throw new Error('unused');
+          },
+          async updateSlot(slot: number, expectedVersion: number, payload: unknown) {
+            const existing = clientMap!.get(slot);
+            const nextVer = (existing?.version ?? expectedVersion) + 1;
+            clientMap!.set(slot, { version: nextVer, payload });
+            return { slot, version: nextVer, updated_at: '2026-01-01T00:00:00Z' };
+          },
+          async deleteSlot() {},
+        } as unknown as CloudCookieClient;
+      },
+      showBadge() {},
+    });
+
+    const r1 = await metaCoordinator.performUpload({ force: false });
+    assert.equal(r1.ok, true);
+    assert.equal(r1.skipped, undefined);
+
+    const keysA = deriveKeys(ROOT_KEY_A);
+    const stored1 = h.remoteSlots.get(`https://server-a.example.com|${keysA.clientId}`)!.get(1)!;
+    assert.equal((stored1.payload as { meta?: { user_agent?: string } }).meta?.user_agent, 'Mozilla/5.0 Chrome/130.0.0.0');
+
+    // Same cookies & same UA -> skipped
+    const r2 = await metaCoordinator.performUpload({ force: false });
+    assert.equal(r2.ok, true);
+    assert.equal(r2.skipped, true);
+
+    // Same cookies & changed UA -> must re-upload with new meta
+    currentUA = 'Mozilla/5.0 Chrome/131.0.0.0';
+    const r3 = await metaCoordinator.performUpload({ force: false });
+    assert.equal(r3.ok, true);
+    assert.equal(r3.skipped, undefined);
+
+    const stored2 = h.remoteSlots.get(`https://server-a.example.com|${keysA.clientId}`)!.get(1)!;
+    assert.equal((stored2.payload as { meta?: { user_agent?: string } }).meta?.user_agent, 'Mozilla/5.0 Chrome/131.0.0.0');
+  });
 });

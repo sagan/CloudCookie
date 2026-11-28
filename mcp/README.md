@@ -153,7 +153,7 @@ Lists all domains that have stored cookies in a slot, along with cookie counts.
   - `slot` (`integer`, optional, `>= 1`): Slot ID. Uses default or auto-discovered slot if omitted.
   - `query` (`string`, optional): Case-insensitive substring filter for domain names.
   - `refresh` (`boolean`, optional): Bypass cache.
-- **Returns**: `{ slot, instance_name, version, domain_count, domains: [{ domain, cookie_count }] }`.
+- **Returns**: `{ slot, instance_name, version, domain_count, domains: [{ domain, cookie_count }], meta? }`.
 
 #### 3. `get_cookies`
 
@@ -168,9 +168,18 @@ Retrieves decrypted cookies for a target `url` or `domain`.
   - `include_expired` (`boolean`, optional, default `false`): Include expired cookies.
   - `names` (`string[]`, optional): Filter to specific cookie names.
   - `refresh` (`boolean`, optional, default `false`): Bypass cache.
-- **Returns**: `{ slot, instance_name, version, target, format, matched_count, ... }` plus the requested format field(s) (`cookie_header`, `cookies`, `netscape`, `playwright`).
+- **Returns**: `{ slot, instance_name, version, target, format, matched_count, meta?, ... }` plus the requested format field(s) (`cookie_header`, `cookies`, `netscape`, `playwright`). When present, `meta` contains the browser's `user_agent`, `user_agent_data`, `platform`, `language`, `languages`, `timezone`, and `extension_version`.
 
-#### 4. `get_bookmarks`
+#### 4. `get_slot_meta`
+
+Retrieves the browser metadata (`user_agent`, `user_agent_data`, `platform`, `language`, `languages`, `timezone`, `extension_version`) uploaded with a CloudCookie slot.
+
+- **Arguments**:
+  - `slot` (`integer`, optional, `>= 1`): Slot ID. Uses default or auto-discovered slot if omitted.
+  - `refresh` (`boolean`, optional, default `false`): Bypass cache.
+- **Returns**: `{ slot, instance_name, version, updated_at, meta }`.
+
+#### 5. `get_bookmarks`
 
 Retrieves or searches decrypted browser bookmarks stored in CloudCookie's dedicated bookmarks slot.
 
@@ -186,4 +195,5 @@ Retrieves or searches decrypted browser bookmarks stored in CloudCookie's dedica
 
 - `cloudcookie://slots` (`application/json`): Active CloudCookie slots.
 - `cloudcookie://domains` (`application/json`): Domains and cookie counts in the default slot.
+- `cloudcookie://meta` (`application/json`): Browser User-Agent and environment metadata in the default slot.
 - `cloudcookie://bookmarks` (`application/json`): Synced browser bookmarks in the dedicated bookmarks slot.

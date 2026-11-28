@@ -27,14 +27,15 @@ type Config struct {
 
 // SlotSummary describes an available slot discovered from Slot 0 and/or server list.
 type SlotSummary struct {
-	Slot        uint32 `json:"slot"`
-	Name        string `json:"name"`
-	CreatedAt   int64  `json:"created_at,omitempty"`
-	UpdatedAt   int64  `json:"updated_at,omitempty"`
-	Version     uint64 `json:"version,omitempty"`
-	SizeBytes   uint64 `json:"size_bytes,omitempty"`
-	CookieCount *int   `json:"cookie_count,omitempty"`
-	DomainCount *int   `json:"domain_count,omitempty"`
+	Slot        uint32       `json:"slot"`
+	Name        string       `json:"name"`
+	CreatedAt   int64        `json:"created_at,omitempty"`
+	UpdatedAt   int64        `json:"updated_at,omitempty"`
+	Version     uint64       `json:"version,omitempty"`
+	SizeBytes   uint64       `json:"size_bytes,omitempty"`
+	CookieCount *int         `json:"cookie_count,omitempty"`
+	DomainCount *int         `json:"domain_count,omitempty"`
+	Meta        *BrowserMeta `json:"meta,omitempty"`
 }
 
 type cachedMeta struct {
@@ -349,6 +350,9 @@ func (c *Client) ListSlots(ctx context.Context, refresh bool) ([]SlotSummary, er
 				dc := cached.payload.DomainCount
 				summary.CookieCount = &cc
 				summary.DomainCount = &dc
+				if cached.payload.Meta != nil {
+					summary.Meta = cached.payload.Meta
+				}
 			}
 			c.mu.RUnlock()
 			result = append(result, summary)

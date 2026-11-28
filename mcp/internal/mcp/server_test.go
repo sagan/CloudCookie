@@ -53,8 +53,16 @@ func newTestServer() *Server {
 				SchemaVersion: 1,
 				Slot:          1,
 				InstanceName:  "Work Chrome",
+				UpdatedAt:     1795692095000,
 				CookieCount:   2,
 				DomainCount:   2,
+				Meta: &cloudcookie.BrowserMeta{
+					UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0 Safari/537.36",
+					Platform:  "MacIntel",
+					Language:  "en-US",
+					Languages: []string{"en-US", "en"},
+					Timezone:  "America/Los_Angeles",
+				},
 				Cookies: map[string][]cloudcookie.SerializedCookie{
 					"example.com": {
 						{
@@ -113,6 +121,8 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 		`{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"cloudcookie://domains"}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_bookmarks","arguments":{"query":"github","format":"markdown"}}}`,
 		`{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"cloudcookie://bookmarks"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"get_slot_meta","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"resources/read","params":{"uri":"cloudcookie://meta"}}`,
 	}
 
 	input := strings.NewReader(strings.Join(requests, "\n") + "\n")
@@ -123,9 +133,9 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	// 9 requests with IDs (notification has no response)
-	if len(lines) != 9 {
-		t.Fatalf("expected 9 responses, got %d:\n%s", len(lines), output.String())
+	// 11 requests with IDs (notification has no response)
+	if len(lines) != 11 {
+		t.Fatalf("expected 11 responses, got %d:\n%s", len(lines), output.String())
 	}
 
 	// Verify initialize
@@ -153,6 +163,9 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 	}
 	if len(getResp.Result.Content) == 0 || !strings.Contains(getResp.Result.Content[0].Text, "sid=xyz") {
 		t.Fatalf("expected sid=xyz in output, got: %+v", getResp.Result.Content)
+	}
+	if !strings.Contains(getResp.Result.Content[0].Text, "Chrome/131.0.0.0") {
+		t.Fatalf("expected browser meta user_agent in get_cookies output, got: %+v", getResp.Result.Content[0].Text)
 	}
 
 	// Verify blocked.com returns isError: true
@@ -204,5 +217,32 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 	}
 	if len(bmResResp.Result.Contents) != 1 || !strings.Contains(bmResResp.Result.Contents[0].Text, "https://example.com") {
 		t.Fatalf("unexpected bookmarks resource output: %+v", bmResResp.Result)
+	}
+
+	// Verify get_slot_meta
+	var metaResp struct {
+		ID     int            `json:"id"`
+		Result CallToolResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[9]), &metaResp); err != nil {
+		t.Fatalf("unmarshal get_slot_meta: %v", err)
+	}
+	if metaResp.Result.IsError {
+		t.Fatalf("unexpected get_slot_meta error: %+v", metaResp.Result)
+	}
+	if len(metaResp.Result.Content) == 0 || !strings.Contains(metaResp.Result.Content[0].Text, "America/Los_Angeles") {
+		t.Fatalf("expected timezone in get_slot_meta output, got: %+v", metaResp.Result.Content)
+	}
+
+	// Verify cloudcookie://meta resource
+	var metaResResp struct {
+		ID     int                `json:"id"`
+		Result ReadResourceResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[10]), &metaResResp); err != nil {
+		t.Fatalf("unmarshal meta resource: %v", err)
+	}
+	if len(metaResResp.Result.Contents) != 1 || !strings.Contains(metaResResp.Result.Contents[0].Text, "MacIntel") {
+		t.Fatalf("unexpected meta resource output: %+v", metaResResp.Result)
 	}
 }
