@@ -79,11 +79,63 @@ jobs:
           name: cloudcookie-ext
           path: cloudcookie-ext.zip
 
+  build-mcp:
+    name: Build MCP server (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: mcp/go.mod
+          cache-dependency-path: mcp/go.mod
+
+      - name: Test MCP server
+        working-directory: mcp
+        run: go test ./...
+
+      - name: Build MCP binary
+        working-directory: mcp
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -ldflags="-s -w" -o "${{ github.workspace }}/cloudcookie-mcp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" .
+
+      - name: Upload MCP binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcookie-mcp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: cloudcookie-mcp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
   release:
     name: Publish GitHub Release
     needs:
       - build-server
       - build-ext
+      - build-mcp
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
@@ -100,6 +152,11 @@ jobs:
             artifacts/cloudcookie-server-aarch64-unknown-linux-musl
             artifacts/cloudcookie-server-x86_64-unknown-linux-musl
             artifacts/cloudcookie-ext.zip
+            artifacts/cloudcookie-mcp-linux-amd64
+            artifacts/cloudcookie-mcp-linux-arm64
+            artifacts/cloudcookie-mcp-darwin-amd64
+            artifacts/cloudcookie-mcp-darwin-arm64
+            artifacts/cloudcookie-mcp-windows-amd64.exe
 
   build-docker:
     name: Build and push Docker image
@@ -165,6 +222,73 @@ jobs:
         with:
           context: .
           file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  build-mcp-docker:
+    name: Build and push MCP Docker image
+    needs:
+      - build-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download linux/amd64 MCP binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcookie-mcp-linux-amd64
+          path: dist-mcp/linux/amd64
+
+      - name: Download linux/arm64 MCP binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcookie-mcp-linux-arm64
+          path: dist-mcp/linux/arm64
+
+      - name: Prepare MCP binaries and Dockerfile
+        run: |
+          mv dist-mcp/linux/amd64/cloudcookie-mcp-linux-amd64 dist-mcp/linux/amd64/cloudcookie-mcp
+          mv dist-mcp/linux/arm64/cloudcookie-mcp-linux-arm64 dist-mcp/linux/arm64/cloudcookie-mcp
+          chmod +x dist-mcp/linux/amd64/cloudcookie-mcp dist-mcp/linux/arm64/cloudcookie-mcp
+          cat <<'EOF' > Dockerfile.mcp.release
+          FROM alpine:3.24
+          ARG TARGETARCH
+          RUN apk add --no-cache ca-certificates
+          COPY dist-mcp/linux/${TARGETARCH}/cloudcookie-mcp /usr/local/bin/cloudcookie-mcp
+          ENV CLOUDCOOKIE_MCP_TRANSPORT=http \
+              CLOUDCOOKIE_MCP_LISTEN=0.0.0.0:6777
+          EXPOSE 6777
+          ENTRYPOINT ["/usr/local/bin/cloudcookie-mcp"]
+          EOF
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract MCP Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-mcp
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build and push MCP Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mcp.release
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

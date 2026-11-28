@@ -18,6 +18,7 @@ CloudCookie is an end-to-end encrypted, multi-slot self-hosting browser cookie s
 
 - [`server/`](server/) — Rust sync server (`cloudcookie-server`) built with Axum, Tokio, `ring`, and `aes-gcm`.
 - [`ext/`](ext/) — Browser extension (`cloudcookie-ext`) built with WXT, React, Tailwind CSS, and `@noble/*` cryptography libraries.
+- [`mcp/`](mcp/) — Standalone Go MCP server (`cloudcookie-mcp`) that connects to a CloudCookie server and serves decrypted cookies to AI agents on demand.
 - [`PROTOCOL.md`](PROTOCOL.md) — CloudCookie Protocol v1 specification, HTTP API, security model, and reference test vectors.
 - [`ext/SCHEMA.md`](ext/SCHEMA.md) — Browser storage layout and encrypted Slot `0` / Slot `1+` JSON schemas.
 - [`LICENSE`](LICENSE) — MIT License.
@@ -163,6 +164,16 @@ cd ext
 npm run compile
 npm test
 ```
+
+### MCP Server Build & Tests
+
+```bash
+cd mcp
+go test ./...
+go build -o cloudcookie-mcp .
+```
+
+See [`mcp/README.md`](mcp/README.md) for configuration and MCP protocol details.
 
 ---
 
