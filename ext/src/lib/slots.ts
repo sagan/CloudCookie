@@ -1,5 +1,5 @@
 import { ApiError, CloudCookieClient } from './api';
-import type { ListSlotEntry, Slot0Payload, SlotDataPayload } from './types';
+import type { BookmarkSlotPayload, ListSlotEntry, Slot0Payload, SlotDataPayload } from './types';
 
 const MAX_CAS_RETRIES = 4;
 const MAX_SLOT_ID = 1023;
@@ -31,6 +31,7 @@ export async function fetchSlot0(
     const meta: Slot0Payload = {
       schema_version: 1,
       updated_at: res.data?.updated_at ?? Date.now(),
+      ...(typeof res.data?.bookmarks_slot === 'number' ? { bookmarks_slot: res.data.bookmarks_slot } : {}),
       slots: res.data?.slots && typeof res.data.slots === 'object' ? res.data.slots : {},
     };
     return { meta, version: res.version };
@@ -121,11 +122,13 @@ export async function createNewSlot(
     const updatedMeta: Slot0Payload = {
       schema_version: 1,
       updated_at: now,
+      ...(typeof meta.bookmarks_slot === 'number' ? { bookmarks_slot: meta.bookmarks_slot } : {}),
       slots: {
         ...meta.slots,
         [String(newSlotId)]: {
           slot: newSlotId,
           name: cleanName,
+          type: 'cookies',
           created_at: now,
           updated_at: now,
         },
@@ -168,11 +171,13 @@ export async function renameSlot(
     const updatedMeta: Slot0Payload = {
       schema_version: 1,
       updated_at: now,
+      ...(typeof meta.bookmarks_slot === 'number' ? { bookmarks_slot: meta.bookmarks_slot } : {}),
       slots: {
         ...meta.slots,
         [String(slot)]: {
           slot,
           name: cleanName,
+          ...(existing?.type ? { type: existing.type } : {}),
           created_at: existing?.created_at ?? now,
           updated_at: now,
         },
@@ -248,11 +253,13 @@ export async function softDeleteSlot(client: CloudCookieClient, slot: number): P
     const nextMeta: Slot0Payload = {
       schema_version: 1,
       updated_at: now,
+      ...(typeof meta.bookmarks_slot === 'number' ? { bookmarks_slot: meta.bookmarks_slot } : {}),
       slots: {
         ...meta.slots,
         [String(slot)]: {
           slot,
           name: existing?.name ?? `Slot #${slot}`,
+          ...(existing?.type ? { type: existing.type } : {}),
           created_at: existing?.created_at ?? now,
           updated_at: now,
           deleted: true,
@@ -306,6 +313,9 @@ export async function deleteSlotAndMeta(client: CloudCookieClient, slot: number)
     const updatedMeta: Slot0Payload = {
       schema_version: 1,
       updated_at: Date.now(),
+      ...(typeof meta.bookmarks_slot === 'number' && meta.bookmarks_slot !== slot
+        ? { bookmarks_slot: meta.bookmarks_slot }
+        : {}),
       slots: nextSlots,
     };
 
@@ -333,4 +343,89 @@ export async function fetchSlotCookies(
     updated_at: res.updated_at,
     payload: res.data,
   };
+}
+
+export function findBookmarksSlotId(meta: Slot0Payload): number | null {
+  if (typeof meta.bookmarks_slot === 'number' && meta.bookmarks_slot >= 1) {
+    const entry = meta.slots[String(meta.bookmarks_slot)];
+    if (!entry?.deleted) {
+      return meta.bookmarks_slot;
+    }
+  }
+  for (const entry of Object.values(meta.slots)) {
+    if (!entry.deleted && entry.type === 'bookmarks' && entry.slot >= 1) {
+      return entry.slot;
+    }
+  }
+  return null;
+}
+
+export async function ensureBookmarksSlot(
+  client: CloudCookieClient,
+): Promise<{ slot: number; meta: Slot0Payload; slot0Version: number }> {
+  for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+    const { meta, slot0Version, serverSlots } = await fetchSlotsWithServerInfo(client);
+    const existingSlot = findBookmarksSlotId(meta);
+    if (existingSlot !== null) {
+      return { slot: existingSlot, meta, slot0Version };
+    }
+
+    const newSlotId = allocateNextSlotId(meta, serverSlots);
+    const now = Date.now();
+    const updatedMeta: Slot0Payload = {
+      schema_version: 1,
+      updated_at: now,
+      bookmarks_slot: newSlotId,
+      slots: {
+        ...meta.slots,
+        [String(newSlotId)]: {
+          slot: newSlotId,
+          name: 'Bookmarks',
+          type: 'bookmarks',
+          created_at: now,
+          updated_at: now,
+        },
+      },
+    };
+
+    try {
+      const res = await client.updateSlot(0, slot0Version, updatedMeta);
+      return {
+        slot: newSlotId,
+        meta: updatedMeta,
+        slot0Version: res.version,
+      };
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'version_conflict' && attempt < MAX_CAS_RETRIES - 1) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error('Failed to allocate bookmarks slot due to concurrent updates');
+}
+
+export async function fetchBookmarksSlot(
+  client: CloudCookieClient,
+): Promise<{ slot: number; version: number; updated_at: string; payload: BookmarkSlotPayload } | null> {
+  const { meta } = await fetchSlot0(client);
+  const slot = findBookmarksSlotId(meta);
+  if (slot === null) {
+    return null;
+  }
+  try {
+    const res = await client.getSlot<BookmarkSlotPayload>(slot);
+    return {
+      slot,
+      version: res.version,
+      updated_at: res.updated_at,
+      payload: res.data,
+    };
+  } catch (err) {
+    if (err instanceof ApiError && err.code === 'no_data') {
+      return null;
+    }
+    throw err;
+  }
 }

@@ -12,8 +12,9 @@ import (
 )
 
 type mockProvider struct {
-	slots []cloudcookie.SlotSummary
-	data  map[uint32]*cloudcookie.SlotDataPayload
+	slots     []cloudcookie.SlotSummary
+	data      map[uint32]*cloudcookie.SlotDataPayload
+	bookmarks *cloudcookie.BookmarkSlotPayload
 }
 
 func (m *mockProvider) ListSlots(_ context.Context, _ bool) ([]cloudcookie.SlotSummary, error) {
@@ -33,6 +34,13 @@ func (m *mockProvider) GetSlotData(_ context.Context, slot uint32, _ bool) (*clo
 		return nil, 0, &cloudcookie.ServerError{StatusCode: 404, Code: "no_data", Message: "slot not found"}
 	}
 	return p, 3, nil
+}
+
+func (m *mockProvider) GetBookmarks(_ context.Context, _ bool) (*cloudcookie.BookmarkSlotPayload, uint64, error) {
+	if m.bookmarks == nil {
+		return nil, 0, cloudcookie.ErrNoBookmarksSlot
+	}
+	return m.bookmarks, 2, nil
 }
 
 func newTestServer() *Server {
@@ -70,6 +78,22 @@ func newTestServer() *Server {
 				},
 			},
 		},
+		bookmarks: &cloudcookie.BookmarkSlotPayload{
+			SchemaVersion: 1,
+			Slot:          99,
+			UpdatedAt:     1795692095000,
+			BookmarkCount: 2,
+			FolderCount:   2,
+			Roots: []cloudcookie.BookmarkNode{
+				{
+					Title: "Bookmarks bar",
+					Children: []cloudcookie.BookmarkNode{
+						{Title: "GitHub", URL: "https://github.com"},
+						{Title: "Example", URL: "https://example.com"},
+					},
+				},
+			},
+		},
 	}
 	policy := cookies.NewDomainPolicy(nil, []string{"blocked.com"})
 	return NewServer(mp, policy, "0.1.0-test", nil)
@@ -87,6 +111,8 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_cookies","arguments":{"url":"https://app.example.com/home","format":"header"}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_cookies","arguments":{"domain":"blocked.com"}}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"cloudcookie://domains"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_bookmarks","arguments":{"query":"github","format":"markdown"}}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"cloudcookie://bookmarks"}}`,
 	}
 
 	input := strings.NewReader(strings.Join(requests, "\n") + "\n")
@@ -97,9 +123,9 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	// 7 requests with IDs (notification has no response)
-	if len(lines) != 7 {
-		t.Fatalf("expected 7 responses, got %d:\n%s", len(lines), output.String())
+	// 9 requests with IDs (notification has no response)
+	if len(lines) != 9 {
+		t.Fatalf("expected 9 responses, got %d:\n%s", len(lines), output.String())
 	}
 
 	// Verify initialize
@@ -151,5 +177,32 @@ func TestServeStdioLifecycleAndTools(t *testing.T) {
 	}
 	if len(resResp.Result.Contents) != 1 || !strings.Contains(resResp.Result.Contents[0].Text, "example.com") {
 		t.Fatalf("unexpected resource output: %+v", resResp.Result)
+	}
+
+	// Verify get_bookmarks
+	var bmResp struct {
+		ID     int            `json:"id"`
+		Result CallToolResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[7]), &bmResp); err != nil {
+		t.Fatalf("unmarshal get_bookmarks: %v", err)
+	}
+	if bmResp.Result.IsError {
+		t.Fatalf("unexpected get_bookmarks error: %+v", bmResp.Result)
+	}
+	if len(bmResp.Result.Content) == 0 || !strings.Contains(bmResp.Result.Content[0].Text, "https://github.com") {
+		t.Fatalf("expected github bookmark in output, got: %+v", bmResp.Result.Content)
+	}
+
+	// Verify cloudcookie://bookmarks resource
+	var bmResResp struct {
+		ID     int                `json:"id"`
+		Result ReadResourceResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[8]), &bmResResp); err != nil {
+		t.Fatalf("unmarshal bookmarks resource: %v", err)
+	}
+	if len(bmResResp.Result.Contents) != 1 || !strings.Contains(bmResResp.Result.Contents[0].Text, "https://example.com") {
+		t.Fatalf("unexpected bookmarks resource output: %+v", bmResResp.Result)
 	}
 }

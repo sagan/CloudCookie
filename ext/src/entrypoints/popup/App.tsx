@@ -9,6 +9,7 @@ import {
   renameSlot,
 } from '../../lib/slots';
 import {
+  clearBookmarksUploadState,
   clearSlotBinding,
   getLocalState,
   getSyncSettings,
@@ -25,13 +26,14 @@ import {
   type SyncSettings,
   type UploadResult,
 } from '../../lib/types';
+import { BookmarksView } from './components/BookmarksView';
 import { ImportView } from './components/ImportView';
 import { SettingsView } from './components/SettingsView';
 import { SetupConnectView } from './components/SetupConnectView';
 import { SlotSelectView } from './components/SlotSelectView';
 
 type Screen = 'loading' | 'setup' | 'slot_select' | 'main';
-type MainTab = 'import' | 'settings';
+type MainTab = 'import' | 'bookmarks' | 'settings';
 type AuthStatus = 'idle' | 'checking' | 'pending' | 'unauthorized' | 'revoked' | 'error';
 
 const App: React.FC = () => {
@@ -80,6 +82,7 @@ const App: React.FC = () => {
         if (connectionChanged) {
           await browser.runtime.sendMessage({ type: 'INVALIDATE_UPLOADS' }).catch(() => {});
           await clearSlotBinding();
+          await clearBookmarksUploadState();
           setLocalState(await getLocalState());
           setUploadBanner(null);
           effectiveUsingSlot = null;
@@ -413,6 +416,17 @@ const App: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={() => setTab('bookmarks')}
+                className={`flex-1 py-2 border-b-2 transition-colors ${
+                  tab === 'bookmarks'
+                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Bookmarks
+              </button>
+              <button
+                type="button"
                 onClick={() => setTab('settings')}
                 className={`flex-1 py-2 border-b-2 transition-colors ${
                   tab === 'settings'
@@ -432,6 +446,18 @@ const App: React.FC = () => {
                 currentSlot={localState.using_slot}
                 activeHostname={activeHostname}
                 onRefreshSlots={refreshSlots}
+              />
+            )}
+
+            {tab === 'bookmarks' && (
+              <BookmarksView
+                client={client}
+                localState={localState}
+                onBookmarksUploaded={async () => {
+                  setLocalState(await getLocalState());
+                  await refreshSlots();
+                }}
+                onOpenSettings={() => setTab('settings')}
               />
             )}
 

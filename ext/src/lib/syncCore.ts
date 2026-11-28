@@ -1,9 +1,17 @@
 import { ApiError, CloudCookieClient, normalizeServerUrl } from './api';
 import { isValidRootKey } from './crypto';
-import { deleteAllServerData, deleteSlotAndMeta, softDeleteSlot } from './slots';
+import {
+  deleteAllServerData,
+  deleteSlotAndMeta,
+  ensureBookmarksSlot,
+  softDeleteSlot,
+} from './slots';
 import type {
+  BookmarkSlotPayload,
+  BookmarksUploadResult,
   DeleteAllResult,
   LocalState,
+  SerializedBookmarkNode,
   SerializedCookie,
   SlotDataPayload,
   SlotUploadState,
@@ -28,12 +36,19 @@ export interface SyncDependencies {
     domainCount: number;
   }>;
   hashCookieMap(cookies: Record<string, SerializedCookie[]>): string;
+  collectLocalBookmarks?: () => Promise<{
+    roots: SerializedBookmarkNode[];
+    bookmarkCount: number;
+    folderCount: number;
+  }>;
+  hashBookmarks?: (roots: SerializedBookmarkNode[]) => string;
   createClient(serverUrl: string, rootKey: string): CloudCookieClient;
   showBadge(text: string, color: string, durationMs?: number): void;
 }
 
 export interface SyncCoordinator {
   performUpload(options?: { force?: boolean }): Promise<UploadResult>;
+  performBookmarksUpload(options?: { force?: boolean }): Promise<BookmarksUploadResult>;
   performSoftDeleteSlot(slot: number): Promise<SoftDeleteResult>;
   performPurgeTombstoneSlot(slot: number): Promise<SoftDeleteResult>;
   performDeleteAllData(): Promise<DeleteAllResult>;
@@ -354,8 +369,168 @@ export function createSyncCoordinator(deps: SyncDependencies): SyncCoordinator {
     });
   }
 
+  async function performBookmarksUpload(
+    options: { force?: boolean } = {},
+  ): Promise<BookmarksUploadResult> {
+    if (!deps.collectLocalBookmarks || !deps.hashBookmarks) {
+      return { ok: false, error: 'Bookmark collection is not configured' };
+    }
+    const collectBookmarks = deps.collectLocalBookmarks;
+    const hashBookmarksFn = deps.hashBookmarks;
+
+    const initialSync = await deps.getSyncSettings();
+    if (!initialSync.server_url || !isValidRootKey(initialSync.root_key)) {
+      return { ok: false, error: 'Server URL or Root Key not configured' };
+    }
+
+    const epochAtStart = syncEpoch;
+
+    return enqueueExclusive(async (): Promise<BookmarksUploadResult> => {
+      try {
+        if (syncEpoch !== epochAtStart) {
+          return { ok: false, error: 'Upload superseded by connection change' };
+        }
+        const [sync, local] = await Promise.all([deps.getSyncSettings(), deps.getLocalState()]);
+        if (!sync.server_url || !isValidRootKey(sync.root_key)) {
+          return { ok: false, error: 'Server URL or Root Key not configured' };
+        }
+        if (!options.force && !local.bookmarks_upload_enabled) {
+          return { ok: true, skipped: true };
+        }
+
+        const client = deps.createClient(sync.server_url, sync.root_key);
+        const { slot } = await ensureBookmarksSlot(client);
+        const targetKey = makeUploadTargetKey(client.serverUrl, client.clientId, slot);
+        const slotState: SlotUploadState | undefined = local.upload_states?.[targetKey];
+
+        const { roots, bookmarkCount, folderCount } = await collectBookmarks();
+        const hash = hashBookmarksFn(roots);
+
+        if (syncEpoch !== epochAtStart) {
+          return { ok: false, error: 'Upload superseded by connection change' };
+        }
+
+        if (
+          !options.force &&
+          slotState?.last_upload_hash === hash &&
+          slotState?.last_upload_status === 'ok' &&
+          slotState?.last_slot_version !== null
+        ) {
+          const remoteSlots = await client.listSlots();
+          const found = remoteSlots.find((s) => s.slot === slot);
+          const highestSeen = await client.getHighestSeenVersion(slot);
+          if (found && found.version < highestSeen) {
+            throw new ApiError(
+              200,
+              'rollback_detected',
+              `Rollback detected for bookmarks slot ${slot}: server listed version ${found.version}, which is lower than locally recorded version ${highestSeen}.`,
+            );
+          }
+          if (found && found.version === slotState.last_slot_version) {
+            return {
+              ok: true,
+              skipped: true,
+              slot,
+              bookmarkCount,
+              folderCount,
+              version: found.version,
+            };
+          }
+        }
+
+        const payload: BookmarkSlotPayload = {
+          schema_version: 1,
+          slot,
+          updated_at: Date.now(),
+          bookmark_count: bookmarkCount,
+          folder_count: folderCount,
+          roots,
+        };
+
+        const highestSeen = await client.getHighestSeenVersion(slot);
+        const expectedVersion = Math.max(slotState?.last_slot_version ?? 0, highestSeen);
+
+        let res: { slot: number; version: number; updated_at: string };
+        try {
+          res = await client.updateSlot(slot, expectedVersion, payload);
+        } catch (err) {
+          if (err instanceof ApiError && err.code === 'version_conflict') {
+            let currentVersion = err.currentVersion;
+            if (currentVersion === undefined) {
+              const slots = await client.listSlots();
+              const found = slots.find((s) => s.slot === slot);
+              currentVersion = found?.version ?? 0;
+            }
+            if (currentVersion < expectedVersion) {
+              throw new ApiError(
+                409,
+                'rollback_detected',
+                `Rollback detected for bookmarks slot ${slot}: server reported version ${currentVersion}, which is lower than locally recorded version ${expectedVersion}.`,
+                { currentVersion },
+              );
+            }
+            if (syncEpoch !== epochAtStart) {
+              return { ok: false, error: 'Upload superseded by connection change' };
+            }
+            res = await client.updateSlot(slot, currentVersion, payload);
+          } else {
+            throw err;
+          }
+        }
+
+        const now = Date.now();
+        const nextSlotState: SlotUploadState = {
+          last_upload_hash: hash,
+          last_upload_at: now,
+          last_upload_status: 'ok',
+          last_upload_error: null,
+          last_slot_version: res.version,
+          last_cookie_count: bookmarkCount,
+          last_domain_count: folderCount,
+        };
+
+        const latestLocal = await deps.getLocalState();
+        await deps.saveLocalState({
+          bookmarks_dirty: false,
+          last_bookmarks_upload_hash: hash,
+          last_bookmarks_upload_at: now,
+          last_bookmarks_upload_status: 'ok',
+          last_bookmarks_upload_error: null,
+          last_bookmarks_slot_version: res.version,
+          last_bookmarks_count: bookmarkCount,
+          last_bookmarks_folder_count: folderCount,
+          upload_states: {
+            ...(latestLocal.upload_states ?? {}),
+            [targetKey]: nextSlotState,
+          },
+        });
+
+        return {
+          ok: true,
+          slot,
+          bookmarkCount,
+          folderCount,
+          version: res.version,
+        };
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorCode = err instanceof ApiError ? err.code : undefined;
+
+        if (syncEpoch === epochAtStart) {
+          await deps.saveLocalState({
+            last_bookmarks_upload_at: Date.now(),
+            last_bookmarks_upload_status: 'error',
+            last_bookmarks_upload_error: errorMsg,
+          });
+        }
+        return { ok: false, error: errorMsg, errorCode };
+      }
+    });
+  }
+
   return {
     performUpload,
+    performBookmarksUpload,
     performSoftDeleteSlot,
     performPurgeTombstoneSlot,
     performDeleteAllData,

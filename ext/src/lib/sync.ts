@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
 import { CloudCookieClient } from './api';
+import { collectLocalBookmarks, hashBookmarks } from './bookmarks';
 import { collectLocalCookies, hashCookieMap } from './cookies';
 import {
   clearAllExtensionData,
@@ -9,7 +10,12 @@ import {
   saveLocalState,
 } from './storage';
 import { createSyncCoordinator } from './syncCore';
-import type { DeleteAllResult, SoftDeleteResult, UploadResult } from './types';
+import type {
+  BookmarksUploadResult,
+  DeleteAllResult,
+  SoftDeleteResult,
+  UploadResult,
+} from './types';
 
 function showBadge(text: string, color: string, durationMs = 4000): void {
   const actionApi = browser.action ?? browser.browserAction;
@@ -31,12 +37,20 @@ const coordinator = createSyncCoordinator({
   clearAllExtensionData,
   collectLocalCookies,
   hashCookieMap,
+  collectLocalBookmarks,
+  hashBookmarks,
   createClient: (serverUrl, rootKey) => new CloudCookieClient(serverUrl, rootKey),
   showBadge,
 });
 
 export function performUpload(options: { force?: boolean } = {}): Promise<UploadResult> {
   return coordinator.performUpload(options);
+}
+
+export function performBookmarksUpload(
+  options: { force?: boolean } = {},
+): Promise<BookmarksUploadResult> {
+  return coordinator.performBookmarksUpload(options);
 }
 
 export function performSoftDeleteSlot(slot: number): Promise<SoftDeleteResult> {

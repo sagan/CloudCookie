@@ -46,6 +46,40 @@ export async function getLocalState(): Promise<LocalState> {
       result.upload_states && typeof result.upload_states === 'object'
         ? (result.upload_states as LocalState['upload_states'])
         : {},
+    bookmarks_upload_enabled:
+      typeof result.bookmarks_upload_enabled === 'boolean'
+        ? result.bookmarks_upload_enabled
+        : DEFAULT_LOCAL_STATE.bookmarks_upload_enabled,
+    bookmarks_dirty:
+      typeof result.bookmarks_dirty === 'boolean'
+        ? result.bookmarks_dirty
+        : DEFAULT_LOCAL_STATE.bookmarks_dirty,
+    last_bookmarks_upload_hash:
+      typeof result.last_bookmarks_upload_hash === 'string'
+        ? result.last_bookmarks_upload_hash
+        : null,
+    last_bookmarks_upload_at:
+      typeof result.last_bookmarks_upload_at === 'number'
+        ? result.last_bookmarks_upload_at
+        : null,
+    last_bookmarks_upload_status:
+      result.last_bookmarks_upload_status === 'ok' || result.last_bookmarks_upload_status === 'error'
+        ? result.last_bookmarks_upload_status
+        : null,
+    last_bookmarks_upload_error:
+      typeof result.last_bookmarks_upload_error === 'string'
+        ? result.last_bookmarks_upload_error
+        : null,
+    last_bookmarks_slot_version:
+      typeof result.last_bookmarks_slot_version === 'number'
+        ? result.last_bookmarks_slot_version
+        : null,
+    last_bookmarks_count:
+      typeof result.last_bookmarks_count === 'number' ? result.last_bookmarks_count : null,
+    last_bookmarks_folder_count:
+      typeof result.last_bookmarks_folder_count === 'number'
+        ? result.last_bookmarks_folder_count
+        : null,
   };
 }
 
@@ -112,6 +146,18 @@ export async function clearSlotBinding(): Promise<void> {
     last_slot_version: null,
     last_cookie_count: null,
     last_domain_count: null,
+  });
+}
+
+export async function clearBookmarksUploadState(): Promise<void> {
+  await browser.storage.local.set({
+    last_bookmarks_upload_hash: null,
+    last_bookmarks_upload_at: null,
+    last_bookmarks_upload_status: null,
+    last_bookmarks_upload_error: null,
+    last_bookmarks_slot_version: null,
+    last_bookmarks_count: null,
+    last_bookmarks_folder_count: null,
   });
 }
 

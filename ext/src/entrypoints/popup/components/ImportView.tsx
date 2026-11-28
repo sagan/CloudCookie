@@ -68,7 +68,7 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const visibleSlots = useMemo(
     () =>
       Object.values(meta.slots)
-        .filter((s) => !s.deleted)
+        .filter((s) => !s.deleted && s.type !== 'bookmarks' && s.slot !== meta.bookmarks_slot)
         .sort((a, b) => a.slot - b.slot),
     [meta],
   );

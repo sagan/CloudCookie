@@ -9,21 +9,24 @@ import (
 	"log"
 	"strings"
 
+	"github.com/sagan/cloudcookie-mcp/internal/bookmarks"
 	"github.com/sagan/cloudcookie-mcp/internal/cloudcookie"
 	"github.com/sagan/cloudcookie-mcp/internal/cookies"
 )
 
-const serverInstructions = `CloudCookie MCP Server provides on-demand read-only access to the user's end-to-end encrypted browser cookies stored in CloudCookie.
+const serverInstructions = `CloudCookie MCP Server provides on-demand read-only access to the user's end-to-end encrypted browser cookies and bookmarks stored in CloudCookie.
 Typical workflow:
 1. Call get_cookies with either "url" (recommended for RFC 6265 domain/path/secure matching) or "domain".
 2. Use format="header" (default) for curl (-H "Cookie: ...") or Firecrawl (headers.Cookie), format="playwright" for Playwright/CDP, or format="netscape" for curl -b.
-3. Optionally call list_domains to discover which websites have saved cookies, or list_slots if the user has multiple browser profiles.`
+3. Optionally call list_domains to discover which websites have saved cookies, or list_slots if the user has multiple browser profiles.
+4. Call get_bookmarks to search or retrieve the user's synced browser bookmarks.`
 
 // CookieProvider abstracts the CloudCookie client for testability.
 type CookieProvider interface {
 	ListSlots(ctx context.Context, refresh bool) ([]cloudcookie.SlotSummary, error)
 	ResolveSlot(ctx context.Context, requestedSlot *uint32, refresh bool) (uint32, error)
 	GetSlotData(ctx context.Context, slot uint32, refresh bool) (*cloudcookie.SlotDataPayload, uint64, error)
+	GetBookmarks(ctx context.Context, refresh bool) (*cloudcookie.BookmarkSlotPayload, uint64, error)
 }
 
 // Server implements the CloudCookie MCP server over stdio.
@@ -174,6 +177,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) JSONRP
 		return okResp(req.ID, s.callListDomains(ctx, params.Arguments))
 	case "get_cookies":
 		return okResp(req.ID, s.callGetCookies(ctx, params.Arguments))
+	case "get_bookmarks":
+		return okResp(req.ID, s.callGetBookmarks(ctx, params.Arguments))
 	default:
 		return errorResp(req.ID, ErrCodeInvalidParams, fmt.Sprintf("unknown tool %q", params.Name))
 	}
@@ -328,6 +333,71 @@ func (s *Server) callGetCookies(ctx context.Context, rawArgs json.RawMessage) Ca
 	return toolJSON(out)
 }
 
+type getBookmarksArgs struct {
+	Query   string `json:"query"`
+	Folder  string `json:"folder"`
+	Format  string `json:"format"`
+	Limit   int    `json:"limit"`
+	Refresh bool   `json:"refresh"`
+}
+
+func (s *Server) callGetBookmarks(ctx context.Context, rawArgs json.RawMessage) CallToolResult {
+	var args getBookmarksArgs
+	if len(rawArgs) > 0 {
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return toolError("invalid arguments: " + err.Error())
+		}
+	}
+
+	format := strings.ToLower(strings.TrimSpace(args.Format))
+	if format == "" {
+		format = "json"
+	}
+	switch format {
+	case "json", "tree", "markdown":
+	default:
+		return toolError(fmt.Sprintf("unsupported format %q; must be one of: json, tree, markdown", args.Format))
+	}
+
+	data, version, err := s.provider.GetBookmarks(ctx, args.Refresh)
+	if err != nil {
+		return toolError(fmt.Sprintf("failed to fetch bookmarks: %v", err))
+	}
+
+	out := map[string]any{
+		"slot":           data.Slot,
+		"version":        version,
+		"updated_at":     data.UpdatedAt,
+		"bookmark_count": data.BookmarkCount,
+		"folder_count":   data.FolderCount,
+		"format":         format,
+	}
+
+	if format == "tree" {
+		out["roots"] = data.Roots
+		return toolJSON(out)
+	}
+
+	matched, total := bookmarks.FilterBookmarks(data, bookmarks.FilterOptions{
+		Query:  args.Query,
+		Folder: args.Folder,
+		Limit:  args.Limit,
+	})
+	if matched == nil {
+		matched = []bookmarks.FlatBookmark{}
+	}
+	out["matched_count"] = total
+	out["returned_count"] = len(matched)
+
+	if format == "markdown" {
+		out["markdown"] = bookmarks.FormatMarkdown(matched)
+	} else {
+		out["bookmarks"] = matched
+	}
+
+	return toolJSON(out)
+}
+
 func (s *Server) handleResourcesRead(ctx context.Context, req JSONRPCRequest) JSONRPCResponse {
 	var params ReadResourceParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -369,6 +439,27 @@ func (s *Server) handleResourcesRead(ctx context.Context, req JSONRPCRequest) JS
 			"slot":          slotID,
 			"instance_name": data.InstanceName,
 			"domains":       domains,
+		}, "", "  ")
+		return okResp(req.ID, ReadResourceResult{
+			Contents: []ResourceContent{{
+				URI:      params.URI,
+				MimeType: "application/json",
+				Text:     string(b),
+			}},
+		})
+
+	case "cloudcookie://bookmarks":
+		data, version, err := s.provider.GetBookmarks(ctx, false)
+		if err != nil {
+			return errorResp(req.ID, ErrCodeInternalError, err.Error())
+		}
+		b, _ := json.MarshalIndent(map[string]any{
+			"slot":           data.Slot,
+			"version":        version,
+			"updated_at":     data.UpdatedAt,
+			"bookmark_count": data.BookmarkCount,
+			"folder_count":   data.FolderCount,
+			"roots":          data.Roots,
 		}, "", "  ")
 		return okResp(req.ID, ReadResourceResult{
 			Contents: []ResourceContent{{
@@ -471,6 +562,42 @@ func toolDefinitions() []ToolDefinition {
 				"additionalProperties": false,
 			},
 		},
+		{
+			Name:        "get_bookmarks",
+			Description: "Retrieve or search decrypted browser bookmarks stored in CloudCookie's dedicated bookmarks slot.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Optional case-insensitive substring filter matching bookmark title, URL, or folder path.",
+					},
+					"folder": map[string]any{
+						"type":        "string",
+						"description": "Optional case-insensitive substring filter matching the bookmark's folder path (e.g. 'Bookmarks bar/Dev').",
+					},
+					"format": map[string]any{
+						"type":        "string",
+						"enum":        []string{"json", "tree", "markdown"},
+						"default":     "json",
+						"description": "Output format: 'json' (flat list with folder_path), 'tree' (nested folder hierarchy), or 'markdown' (Markdown link list).",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"maximum":     1000,
+						"default":     100,
+						"description": "Maximum number of bookmarks to return in 'json' or 'markdown' format.",
+					},
+					"refresh": map[string]any{
+						"type":        "boolean",
+						"default":     false,
+						"description": "Bypass local cache and fetch fresh data from the CloudCookie server.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
 	}
 }
 
@@ -486,6 +613,12 @@ func resourceDefinitions() []ResourceDefinition {
 			URI:         "cloudcookie://domains",
 			Name:        "CloudCookie Domains",
 			Description: "List of domains with stored cookies in the default CloudCookie slot.",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "cloudcookie://bookmarks",
+			Name:        "CloudCookie Bookmarks",
+			Description: "Synced browser bookmarks stored in CloudCookie's dedicated bookmarks slot.",
 			MimeType:    "application/json",
 		},
 	}

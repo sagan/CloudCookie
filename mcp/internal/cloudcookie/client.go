@@ -48,6 +48,15 @@ type cachedSlotData struct {
 	fetchedAt time.Time
 }
 
+type cachedBookmarksData struct {
+	payload   *BookmarkSlotPayload
+	version   uint64
+	fetchedAt time.Time
+}
+
+// ErrNoBookmarksSlot is returned when no bookmarks slot has been configured/uploaded yet.
+var ErrNoBookmarksSlot = errors.New("no bookmarks slot found in CloudCookie")
+
 // Client is a zero-knowledge CloudCookie v1 read-only client with TTL caching.
 type Client struct {
 	serverURL   string
@@ -57,9 +66,10 @@ type Client struct {
 	httpClient  *http.Client
 	clockOffset atomic.Int64
 
-	mu        sync.RWMutex
-	metaCache *cachedMeta
-	slotCache map[uint32]cachedSlotData
+	mu             sync.RWMutex
+	metaCache      *cachedMeta
+	slotCache      map[uint32]cachedSlotData
+	bookmarksCache *cachedBookmarksData
 }
 
 // NewClient creates a new CloudCookie client after validating serverURL and e2eKey.
@@ -319,6 +329,9 @@ func (c *Client) ListSlots(ctx context.Context, refresh bool) ([]SlotSummary, er
 			if entry.Deleted || entry.Slot == 0 {
 				continue
 			}
+			if entry.Type == "bookmarks" || (meta.BookmarksSlot != nil && entry.Slot == *meta.BookmarksSlot) {
+				continue
+			}
 			seen[entry.Slot] = true
 			summary := SlotSummary{
 				Slot:      entry.Slot,
@@ -392,4 +405,75 @@ func (c *Client) ResolveSlot(ctx context.Context, requestedSlot *uint32, refresh
 		}
 	}
 	return best.Slot, nil
+}
+
+func findBookmarksSlotID(meta *Slot0Payload) (uint32, bool) {
+	if meta == nil {
+		return 0, false
+	}
+	if meta.BookmarksSlot != nil && *meta.BookmarksSlot >= 1 {
+		key := strconv.FormatUint(uint64(*meta.BookmarksSlot), 10)
+		if entry, ok := meta.Slots[key]; !ok || !entry.Deleted {
+			return *meta.BookmarksSlot, true
+		}
+	}
+	for _, entry := range meta.Slots {
+		if !entry.Deleted && entry.Type == "bookmarks" && entry.Slot >= 1 {
+			return entry.Slot, true
+		}
+	}
+	return 0, false
+}
+
+// GetBookmarks fetches and decrypts the dedicated bookmarks slot.
+func (c *Client) GetBookmarks(ctx context.Context, refresh bool) (*BookmarkSlotPayload, uint64, error) {
+	if !refresh && c.cacheTTL > 0 {
+		c.mu.RLock()
+		if c.bookmarksCache != nil && time.Since(c.bookmarksCache.fetchedAt) < c.cacheTTL {
+			p := c.bookmarksCache.payload
+			v := c.bookmarksCache.version
+			c.mu.RUnlock()
+			return p, v, nil
+		}
+		c.mu.RUnlock()
+	}
+
+	meta, err := c.GetMeta(ctx, refresh)
+	if err != nil {
+		return nil, 0, err
+	}
+	slotID, ok := findBookmarksSlotID(meta)
+	if !ok {
+		return nil, 0, ErrNoBookmarksSlot
+	}
+
+	resp, err := c.doSync(ctx, "get", &slotID)
+	if err != nil {
+		var srvErr *ServerError
+		if errors.As(err, &srvErr) && srvErr.Code == "no_data" {
+			return nil, 0, ErrNoBookmarksSlot
+		}
+		return nil, 0, err
+	}
+
+	plain, err := DecryptSlot(c.keys.EncKey, c.keys.ClientID, slotID, resp.Version, resp.Encrypted)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decrypt bookmarks slot %d: %w", slotID, err)
+	}
+
+	var data BookmarkSlotPayload
+	if err := json.Unmarshal(plain, &data); err != nil {
+		return nil, 0, fmt.Errorf("parse bookmarks slot %d json: %w", slotID, err)
+	}
+
+	if c.cacheTTL > 0 {
+		c.mu.Lock()
+		c.bookmarksCache = &cachedBookmarksData{
+			payload:   &data,
+			version:   resp.Version,
+			fetchedAt: time.Now(),
+		}
+		c.mu.Unlock()
+	}
+	return &data, resp.Version, nil
 }

@@ -26,6 +26,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSwitchSlot,
 }) => {
   const [autoUpload, setAutoUpload] = useState(localState.auto_upload_enabled);
+  const [bookmarksUploadEnabled, setBookmarksUploadEnabled] = useState(
+    localState.bookmarks_upload_enabled,
+  );
   const [interval, setInterval] = useState(localState.upload_interval_minutes);
   const [blacklistText, setBlacklistText] = useState(localState.blacklist_domains.join('\n'));
   const [slotName, setSlotName] = useState(localState.using_slot_name || '');
@@ -55,6 +58,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       await onSaveLocalSettings({
         auto_upload_enabled: autoUpload,
+        bookmarks_upload_enabled: bookmarksUploadEnabled,
+        ...(bookmarksUploadEnabled && !localState.bookmarks_upload_enabled
+          ? { bookmarks_dirty: true }
+          : {}),
         upload_interval_minutes: Math.max(1, Number(interval) || 5),
         blacklist_domains: parsedBlacklist,
       });
@@ -213,6 +220,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             className="w-full px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 font-mono"
           />
         </div>
+      </div>
+
+      <div className="p-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
+        <div className="flex items-center justify-between">
+          <label className="font-semibold text-slate-700 dark:text-slate-200">
+            Enable Bookmark Uploading
+          </label>
+          <input
+            type="checkbox"
+            checked={bookmarksUploadEnabled}
+            onChange={(e) => setBookmarksUploadEnabled(e.target.checked)}
+            className="h-4 w-4 accent-blue-600"
+          />
+        </div>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+          Opt-in (disabled by default). Bookmarks are usually synced by your browser account, so
+          enable this on one browser instance only to avoid redundant uploads. Stored in a separate
+          encrypted slot.
+        </p>
       </div>
 
       {error && (

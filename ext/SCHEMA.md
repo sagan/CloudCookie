@@ -13,6 +13,8 @@
   - `upload_interval_minutes`: `number` (default `5`)
   - `blacklist_domains`: `string[]`
   - `last_upload_hash`, `last_upload_at`, `last_upload_status`, `last_upload_error`, `last_slot_version`, `last_cookie_count`, `last_domain_count`
+  - `bookmarks_upload_enabled`: `boolean` (default `false`; opt-in because Chrome/Firefox accounts usually sync bookmarks automatically)
+  - `last_bookmarks_upload_hash`, `last_bookmarks_upload_at`, `last_bookmarks_upload_status`, `last_bookmarks_upload_error`, `last_bookmarks_slot_version`, `last_bookmarks_count`, `last_bookmarks_folder_count`
 
 ---
 
@@ -24,18 +26,28 @@ Encrypted with XAES-256-GCM (`AAD = cloudcookie-v1:<client_id>:0:<version>`):
 {
   "schema_version": 1,
   "updated_at": 1795692095000,
+  "bookmarks_slot": 42,
   "slots": {
     "1": {
       "slot": 1,
       "name": "Work MacBook Chrome",
+      "type": "cookies",
       "created_at": 1795690000000,
       "updated_at": 1795692095000
     },
     "2": {
       "slot": 2,
       "name": "Home Linux Desktop",
+      "type": "cookies",
       "created_at": 1795691000000,
       "updated_at": 1795691500000
+    },
+    "42": {
+      "slot": 42,
+      "name": "Bookmarks",
+      "type": "bookmarks",
+      "created_at": 1795691800000,
+      "updated_at": 1795692095000
     }
   }
 }
@@ -84,3 +96,33 @@ Encrypted with XAES-256-GCM (`AAD = cloudcookie-v1:<client_id>:<slot>:<version>`
   - The extension manifest sets `"incognito": "not_allowed"`, and cookie collection excludes private/incognito cookie stores so incognito cookies are never uploaded into a normal slot.
   - Default store IDs (`"0"`, `"firefox-default"`, or omitted) omit `storeId` on import so cookies sync seamlessly between Chrome and Firefox default stores.
   - Non-default `storeId` values (such as Firefox containers `firefox-container-*`) are preserved on import **only** when the matching `storeId` exists in `browser.cookies.getAllCookieStores()`; otherwise, the cookie is skipped rather than downgraded into the default store.
+
+---
+
+## Bookmarks Slot Schema (Encrypted Bookmarks Data Slot, `slot = bookmarks_slot`)
+
+Stored in a dedicated slot allocated from `1..1023` (tracked via `Slot0Payload.bookmarks_slot` and `slots[id].type = "bookmarks"`), separate from cookie slots so routine cookie syncs do not re-upload bookmarks.
+
+Encrypted with XAES-256-GCM (`AAD = cloudcookie-v1:<client_id>:<slot>:<version>`):
+
+```json
+{
+  "schema_version": 1,
+  "slot": 42,
+  "updated_at": 1795692095000,
+  "bookmark_count": 2,
+  "folder_count": 2,
+  "roots": [
+    {
+      "title": "Bookmarks bar",
+      "children": [
+        {
+          "title": "GitHub",
+          "url": "https://github.com",
+          "dateAdded": 1795690000000
+        }
+      ]
+    }
+  ]
+}
+```

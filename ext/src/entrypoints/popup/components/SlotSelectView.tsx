@@ -39,11 +39,11 @@ export const SlotSelectView: React.FC<SlotSelectViewProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const slotEntries = Object.values(meta.slots)
-    .filter((entry) => !entry.deleted)
+    .filter((entry) => !entry.deleted && entry.type !== 'bookmarks' && entry.slot !== meta.bookmarks_slot)
     .sort((a, b) => a.slot - b.slot);
 
   const deletedEntries = Object.values(meta.slots)
-    .filter((entry) => entry.deleted)
+    .filter((entry) => entry.deleted && entry.type !== 'bookmarks' && entry.slot !== meta.bookmarks_slot)
     .sort((a, b) => a.slot - b.slot);
 
   const handleCreate = async (e: React.FormEvent) => {

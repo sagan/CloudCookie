@@ -170,7 +170,20 @@ Retrieves decrypted cookies for a target `url` or `domain`.
   - `refresh` (`boolean`, optional, default `false`): Bypass cache.
 - **Returns**: `{ slot, instance_name, version, target, format, matched_count, ... }` plus the requested format field(s) (`cookie_header`, `cookies`, `netscape`, `playwright`).
 
+#### 4. `get_bookmarks`
+
+Retrieves or searches decrypted browser bookmarks stored in CloudCookie's dedicated bookmarks slot.
+
+- **Arguments**:
+  - `query` (`string`, optional): Case-insensitive substring filter matching bookmark title, URL, or folder path.
+  - `folder` (`string`, optional): Case-insensitive substring filter matching the bookmark's folder path.
+  - `format` (`string`, optional, default `"json"`): One of `"json"` (flat list with `folder_path`), `"tree"` (nested folder hierarchy), or `"markdown"`.
+  - `limit` (`integer`, optional, default `100`, max `1000`): Maximum number of bookmarks to return in `"json"` or `"markdown"` format.
+  - `refresh` (`boolean`, optional, default `false`): Bypass cache.
+- **Returns**: `{ slot, version, updated_at, bookmark_count, folder_count, format, ... }` plus `bookmarks`, `roots`, or `markdown`.
+
 ### Resources
 
 - `cloudcookie://slots` (`application/json`): Active CloudCookie slots.
 - `cloudcookie://domains` (`application/json`): Domains and cookie counts in the default slot.
+- `cloudcookie://bookmarks` (`application/json`): Synced browser bookmarks in the dedicated bookmarks slot.

@@ -42,6 +42,7 @@ type SyncResponse struct {
 type SlotMetaEntry struct {
 	Slot      uint32 `json:"slot"`
 	Name      string `json:"name"`
+	Type      string `json:"type,omitempty"`
 	CreatedAt int64  `json:"created_at"`
 	UpdatedAt int64  `json:"updated_at"`
 	Deleted   bool   `json:"deleted,omitempty"`
@@ -51,6 +52,7 @@ type SlotMetaEntry struct {
 type Slot0Payload struct {
 	SchemaVersion int                      `json:"schema_version"`
 	UpdatedAt     int64                    `json:"updated_at"`
+	BookmarksSlot *uint32                  `json:"bookmarks_slot,omitempty"`
 	Slots         map[string]SlotMetaEntry `json:"slots"`
 }
 
@@ -85,6 +87,24 @@ type SlotDataPayload struct {
 	CookieCount   int                           `json:"cookie_count"`
 	DomainCount   int                           `json:"domain_count"`
 	Cookies       map[string][]SerializedCookie `json:"cookies"`
+}
+
+// BookmarkNode matches the browser extension's SerializedBookmarkNode schema.
+type BookmarkNode struct {
+	Title     string         `json:"title"`
+	URL       string         `json:"url,omitempty"`
+	DateAdded int64          `json:"dateAdded,omitempty"`
+	Children  []BookmarkNode `json:"children,omitempty"`
+}
+
+// BookmarkSlotPayload is the decrypted JSON payload of the dedicated bookmarks slot.
+type BookmarkSlotPayload struct {
+	SchemaVersion int            `json:"schema_version"`
+	Slot          uint32         `json:"slot"`
+	UpdatedAt     int64          `json:"updated_at"`
+	BookmarkCount int            `json:"bookmark_count"`
+	FolderCount   int            `json:"folder_count"`
+	Roots         []BookmarkNode `json:"roots"`
 }
 
 // ServerError represents an error returned by the CloudCookie HTTP API.
